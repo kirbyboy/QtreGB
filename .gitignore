@@ -1,0 +1,31 @@
+# Archivos temporales
+*.log
+*.tmp
+
+imgui.ini
+
+# Compilados
+/build/
+/cores/
+/deps/
+/lib/
+/MyOutputFolder/
+/obj/
+/roms/
+.cache
+*.exe
+*.dll
+*.so
+*.out
+
+# Archivos de IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+compile_commands.json
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
