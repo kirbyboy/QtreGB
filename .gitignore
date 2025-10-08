@@ -12,6 +12,7 @@ imgui.ini
 /MyOutputFolder/
 /obj/
 /roms/
+/readme.txt
 .cache
 *.exe
 *.dll
