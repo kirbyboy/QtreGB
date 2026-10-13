@@ -19,6 +19,14 @@ imgui.ini
 *.so
 *.out
 
+# ROMs de test descargados (Mooneye) y documentación de referencia
+/vendor/
+/docs/
+
+# Estado local de las herramientas (open-code / oh-my-open-code)
+/.omo/
+/.opencode/
+
 # Archivos de IDE
 .vscode/
 .idea/
