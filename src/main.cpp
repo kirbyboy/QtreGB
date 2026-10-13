@@ -16,13 +16,15 @@
 #include "emulator_frontend.h"
 #include "imgui_manager.h"
 
+using namespace qtreGB;
+
 using namespace std;
 
 constexpr u32 GB_PALETTE[4] = {
-    0xFFFFFFFF, // Blanco → color 0
-    0xAAAAAAFF, // Gris claro → color 1
-    0x555555FF, // Gris oscuro → color 2
-    0x000000FF  // Negro → color 3
+    0xFFFFFFFF, // White -> color 0
+    0xAAAAAAFF, // Light gray -> color 1
+    0x555555FF, // Dark gray -> color 2
+    0x000000FF  // Black -> color 3
 };
 
 /*
@@ -92,7 +94,7 @@ int main()
 
 	while (running)
 	{
-		// Procesar eventos SDL
+		// Process SDL events
 		while (SDL_PollEvent(&event))
 		{
 
@@ -107,19 +109,19 @@ int main()
 		}
 
 		bool frame_ready = false;
-		auto start = SDL_GetTicks();   // o std::chrono
+		auto start = SDL_GetTicks();   // or std::chrono
 		while (!frame_ready)
 		{
 			frontend.get_emulator()->tick();
 			frame_ready = frontend.get_emulator()->get_frame_ready();
 
-			// condición de salida: no bloquear GUI
+			// exit condition: do not block the GUI
 			auto now = SDL_GetTicks();
-			if (now - start > FPS)  // ~16ms: ya toca refrescar GUI
+			if (now - start > FPS)  // ~16ms: time to refresh the GUI
 				break;
 		}
 
-		// --- 2. Actualizar framebuffer si lo hay ---
+		// --- 2. Update framebuffer if there is one ---
 		if (frame_ready)
 		{
 			frontend.get_emulator()->update_frame(GB_PALETTE);

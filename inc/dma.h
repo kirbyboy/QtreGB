@@ -1,9 +1,12 @@
 #ifndef QTREGB_DMA_H
 #define QTREGB_DMA_H
 
-#include "common.h"
+#include "types.h"
 #include "ppu.h"
 #include "ibus.h"
+
+namespace qtreGB
+{
 
 class DMA
 {
@@ -16,14 +19,21 @@ class DMA
 
 
 	private:
-		bool m_active;
-		u8 m_byte;
-		u8 m_value;
-		u8 m_start_delay;
+		// m_active: a byte copy is actually in progress, so OAM/the source bus
+		//           are owned by the DMA (the CPU sees them blocked).
+		// m_pending: a transfer has been requested but has not started/finished
+		//            yet (covers the 2-machine-cycle start delay).
+		bool m_active = false;
+		bool m_pending = false;
+		u8 m_byte = 0;
+		u8 m_value = 0;
+		u8 m_start_delay = 0;
 
 		IBus *m_bus;
 		PPU *m_ppu;
 
 };
 
+
+} // namespace qtreGB
 #endif

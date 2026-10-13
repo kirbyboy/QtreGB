@@ -3,7 +3,10 @@
 
 #include <vector>
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class Memory
 {
@@ -17,4 +20,6 @@ class Memory
 		std::vector<u8> m_ram;
 };
 
+
+} // namespace qtreGB
 #endif

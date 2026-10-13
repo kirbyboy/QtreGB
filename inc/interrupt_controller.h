@@ -2,7 +2,10 @@
 #define QTREGB_INTERRUPT_CONTROLLER_H
 
 #include <functional>
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class InterruptController
 {
@@ -21,4 +24,6 @@ class InterruptController
 		std::function<void(u8)> IE_write;
 };
 
+
+} // namespace qtreGB
 #endif

@@ -2,7 +2,10 @@
 #define QTREGB_GAMEPAD_H
 
 #include <functional>
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class Gamepad
 {
@@ -28,4 +31,6 @@ class Gamepad
 		InterruptCallback m_interrupt_handler;
 };
 
+
+} // namespace qtreGB
 #endif

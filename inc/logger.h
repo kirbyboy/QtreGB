@@ -5,7 +5,10 @@
 #include <vector>
 #include <iostream>
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 #ifdef ENABLE_LOG
 
@@ -63,9 +66,11 @@ inline void active_LOG(bool active)
 }
 
 #else
-// Versión release: función vacía inline -> cero overhead
+// Release version: empty inline function -> zero overhead
 inline void LOG(const std::string& , const std::string& ) noexcept {}
 inline void active_LOG(bool) noexcept {}
 #endif
 
+
+} // namespace qtreGB
 #endif

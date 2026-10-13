@@ -1,7 +1,10 @@
 #ifndef QTREGB_LCD_H
 #define QTREGB_LCD_H
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 enum class LCDMode
 {
@@ -64,12 +67,11 @@ class LCD
 
 		//registers
 		u8 m_lcdc;	// FF40 — LCDC: LCD control
-		u8 m_lcds;	// FF41 — STAT: LCD status
+		u8 m_lcds = 0;	// FF41 — STAT: LCD status
 		u8 m_scroll_y;	// FF42 – SCY: Background viewport Y position
 		u8 m_scroll_x;	// FF43 — SCX: Background viewport X position
 		u8 m_ly;	// FF44 — LY: LCD Y coordinate [read-only]
 		u8 m_lyc;	// FF45 — LYC: LY compare
-		u8 m_dma;	// FF46 — DMA: OAM DMA source address & start
 		u8 m_bg_palette;	// FF47 — BGP (Non-CGB Mode only): BG palette data
 		u8 m_obj_palette_0;	// FF48 — OBP0: OBJ palette 0 data
 		u8 m_obj_palette_1;	// FF49 — OBP1: OBJ palette 1 data
@@ -77,4 +79,6 @@ class LCD
 		u8 m_win_x;	// FF4B — WX: Window X position plus 7
 };
 
+
+} // namespace qtreGB
 #endif

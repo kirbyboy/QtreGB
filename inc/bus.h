@@ -1,7 +1,7 @@
 #ifndef QTREGB_BUS_H
 #define QTREGB_BUS_H
 
-#include "common.h"
+#include "types.h"
 #include "ibus.h"
 #include "cart.h"
 #include "timer.h"
@@ -13,6 +13,9 @@
 #include "io.h"
 #include "lcd.h"
 #include "ppu.h"
+
+namespace qtreGB
+{
 
 class QtreGB;
 
@@ -38,4 +41,6 @@ class Bus : public IBus
 		ICPURegisters *m_cpu_registers;
 };
 
+
+} // namespace qtreGB
 #endif

@@ -3,7 +3,10 @@
 
 #include <vector>
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class Memory;
 
@@ -21,4 +24,6 @@ class InternalCart
 		virtual void write(u16 address, u8 value) = 0;
 };
 
+
+} // namespace qtreGB
 #endif

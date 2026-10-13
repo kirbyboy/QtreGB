@@ -2,9 +2,12 @@
 #define QTREGB_CART_MBC1_H
 #include <vector>
 
-#include "common.h"
+#include "types.h"
 #include "internal_cart.h"
 #include "memory.h"
+
+namespace qtreGB
+{
 
 class CartMBC1 : public InternalCart
 {
@@ -29,4 +32,6 @@ class CartMBC1 : public InternalCart
 		u8 m_rom_bank;
 };
 
+
+} // namespace qtreGB
 #endif

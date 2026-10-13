@@ -3,12 +3,16 @@
 
 #include <vector>
 #include <array>
+#include <string>
 
-#include "common.h"
+#include "types.h"
 #include "fifo.h"
 #include "ibus.h"
 #include "lcd.h"
 #include "oam_entry.h"
+
+namespace qtreGB
+{
 
 enum class FetchEntry:u8
 {
@@ -77,6 +81,13 @@ class Fetcher
 		void load_oam_entries(std::vector<OAMEntry> entries);
 		void check_mode();
 
+		// Debug trace: records what the fetcher does each fetch while enabled.
+		// Used only by the headless dumper; disabled (no cost) in normal runs.
+void debug_begin(u8 line);
+	void debug_end();
+	void debug_set_line(u8 line);
+	const std::vector<std::string>& debug_log() const;
+
 		void fill_object_array();
 		std::array<FIFOElement, 160>& get_object_array();
 
@@ -109,6 +120,12 @@ class Fetcher
 
 		std::array<FIFOElement, 160> m_object_array;
 
+		bool m_debug_enabled = false;
+		u8 m_debug_line = 0;
+		std::vector<std::string> m_debug_log;
+
+		void debug_trace(const std::string& entry);
+
 		void fill_map_background();
 		void fill_map_window();
 		void fill_map_sprite();
@@ -127,4 +144,6 @@ class Fetcher
 		void sm_obj();	// objects state machine
 };
 
+
+} // namespace qtreGB
 #endif

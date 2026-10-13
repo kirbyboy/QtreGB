@@ -3,7 +3,10 @@
 
 #include <array>
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class FIFOElement
 {
@@ -43,4 +46,6 @@ class FIFO
 		std::array<FIFOElement, 8> m_elements;	// Actual elements of this FIFO
 };
 
+
+} // namespace qtreGB
 #endif

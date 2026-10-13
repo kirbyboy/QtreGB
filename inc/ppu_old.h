@@ -7,7 +7,7 @@
 #include <queue>
 #include <array>
 
-#include "common.h"
+#include "types.h"
 #include "memory.h"
 
 class QtreGB;

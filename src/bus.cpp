@@ -1,6 +1,8 @@
 #include "bus.h"
 #include "QtreGB.h"
 
+using namespace qtreGB;
+
 Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Memory* hram, IO* io, LCD* lcd, PPU* ppu, ICPURegisters* cpu_registers)
 {
 	m_cart = cart;
@@ -37,7 +39,8 @@ u8 Bus::read(u16 address)
 	}
 	else if(address < 0xFE00)
 	{
-		return 0xFF;
+		// Echo RAM: mirrors 0xC000-0xDDFF (confirmed on all official hardware)
+		return m_wram->read(address - 0xE000);
 	}
 	else if(address < 0xFEA0)
 	{
@@ -63,19 +66,19 @@ u8 Bus::read(u16 address)
 		// timer
 		else if(address == 0xFF04)
 		{
-			return m_timer->m_div >> 8;
+			return m_timer->read_div();
 		}
 		else if(address == 0xFF05)
 		{
-			return m_timer->m_tima;
+			return m_timer->read_tima();
 		}
 		else if(address == 0xFF06)
 		{
-			return m_timer->m_tma;
+			return m_timer->read_tma();
 		}
 		else if(address == 0xFF07)
 		{
-			return m_timer->m_tac;
+			return m_timer->read_tac();
 		}
 		else if(address >= 0xFF40 && address <= 0xFF4B)
 		{
@@ -125,6 +128,7 @@ void Bus::write(u16 address, u8 value)
 	}
 	else if(address < 0xFE00)
 	{
+		m_wram->write(address - 0xE000, value);
 	}
 	else if(address < 0xFEA0)
 	{
@@ -147,19 +151,19 @@ void Bus::write(u16 address, u8 value)
 		}
 		else if(address == 0xFF04)
 		{
-			m_timer->m_div = 0;
+			m_timer->write_div();
 		}
 		else if(address == 0xFF05)
 		{
-			m_timer->m_tima = value;
+			m_timer->write_tima(value);
 		}
 		else if(address == 0xFF06)
 		{
-			m_timer->m_tma = value;
+			m_timer->write_tma(value);
 		}
 		else if(address == 0xFF07)
 		{
-			m_timer->m_tac = value;
+			m_timer->write_tac(value);
 		}
 		else if(address == 0xFF0F)
 		{
@@ -174,6 +178,14 @@ void Bus::write(u16 address, u8 value)
 			else
 			{
 				m_lcd->write(address - 0xFF40, value);
+
+				// The LCD power transition is applied synchronously at the LCDC write so that a
+				// STAT interrupt from the restarted LYC comparison is already pending when the CPU
+				// runs its end-of-opcode interrupt check (mooneye stat_lyc_onoff round 4).
+				if(address == 0xFF40)
+				{
+					m_ppu->ppu_sync_lcd_power();
+				}
 			}
 		}
 		else

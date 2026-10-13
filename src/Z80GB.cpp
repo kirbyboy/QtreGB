@@ -1,8 +1,11 @@
 #include "Z80GB.h"
 #include "operations.h"
+#include "error_reporter.h"
 
 #include <cstdlib>
 #include <cstdio>
+
+using namespace qtreGB;
 
 static RegType decode_reg(u8 reg)
 {
@@ -24,21 +27,31 @@ static RegType decode_reg(u8 reg)
 
 Z80GB::Z80GB(InterruptController* interrupt_controller) : m_interrupt_controller(interrupt_controller)
 {
-	m_interrupt_controller->set_IE_read_callback([this]() { return this->read_IE(); });
-	m_interrupt_controller->set_IE_write_callback([this](u8 value) { this->write_IE(value); });
-	m_interrupt_controller->set_IF_read_callback([this]() { return this->read_IF(); });
-	m_interrupt_controller->set_IF_write_callback([this](u8 value) { this->write_IF(value); });
+	if(m_interrupt_controller != nullptr)
+	{
+		m_interrupt_controller->set_IE_read_callback([this]() { return this->read_IE(); });
+		m_interrupt_controller->set_IE_write_callback([this](u8 value) { this->write_IE(value); });
+		m_interrupt_controller->set_IF_read_callback([this]() { return this->read_IF(); });
+		m_interrupt_controller->set_IF_write_callback([this](u8 value) { this->write_IF(value); });
+	}
 }
 
 void Z80GB::tick()
 {
-	execute();
-
+	// EI defers the IME enable to the boundary after the instruction that
+	// follows it: ei() in mooneye-gb prefetches the next opcode with IME still
+	// 0 and only then sets ime = true. Applying the deferred enable *before*
+	// execute() makes that following instruction's end-of-opcode interrupt
+	// check observe IME=1, so the interrupt is dispatched exactly like the
+	// reference. (RETI instead sets IME=1 directly in its handler, so it
+	// dispatches at its own boundary.)
 	if(m_next_m_cycle && m_end_opcode)
 	{
 		m_ime = true;
 		m_next_m_cycle = false;
 	}
+
+	execute();
 
 	if(m_enabling_ime && m_end_opcode)
 	{
@@ -61,26 +74,129 @@ void Z80GB::reset()
 	m_l = 0x4D;
 
 	m_ime = false;
+	m_enabling_ime = false;
+	m_next_m_cycle = false;
 
 	m_opcode = 0;
+	m_t_cycle = 1;
+	m_m_cycle = 1;
 	m_end_opcode = true;
 
 	m_is_interruption_time = false;
-	m_next_m_cycle = false;
 
 	m_if = 0;
 	m_ie = 0;
 
 	m_is_halted = false;
 	m_halt_bug = false;
+
+	m_fetched_address = 0;
+	m_fetched_data_lo = 0;
+	m_fetched_data_hi = 0;
 }
 
 
+bool Z80GB::is_end_m_cycle() const
+{
+	return m_t_cycle % 4 == 0;
+}
+
+bool Z80GB::is_end_opcode() const
+{
+	return m_end_opcode;
+}
+
+bool Z80GB::is_interruption_time() const
+{
+	return m_is_interruption_time;
+}
+
+void Z80GB::State::serialize(TaggedSerializer& s)
+{
+	s.process("a", a);
+	s.process("f", f);
+	s.process("b", b);
+	s.process("c", c);
+	s.process("d", d);
+	s.process("e", e);
+	s.process("h", h);
+	s.process("l", l);
+	s.process("pc", pc);
+	s.process("sp", sp);
+}
+
+// Snapshot / backdoor: the first ten tags are, in order, the State ones
+// (the tests read through that prefix). The rest is internal state; in
+// Read mode any of them can be injected.
+void Z80GB::serialize(TaggedSerializer& s)
+{
+	s.process("a", m_a);
+	s.process("f", m_f);
+	s.process("b", m_b);
+	s.process("c", m_c);
+	s.process("d", m_d);
+	s.process("e", m_e);
+	s.process("h", m_h);
+	s.process("l", m_l);
+	s.process("pc", m_pc);
+	s.process("sp", m_sp);
+
+	s.process("ime", m_ime);
+	s.process("if", m_if);
+	s.process("ie", m_ie);
+	s.process("is_halted", m_is_halted);
+	s.process("halt_bug", m_halt_bug);
+	s.process("enabling_ime", m_enabling_ime);
+	s.process("next_m_cycle", m_next_m_cycle);
+	s.process("is_interruption_time", m_is_interruption_time);
+	s.process("opcode", m_opcode);
+	s.process("t_cycle", m_t_cycle);
+	s.process("m_cycle", m_m_cycle);
+	s.process("end_opcode", m_end_opcode);
+	s.process("fetched_address", m_fetched_address);
+	s.process("fetched_data_lo", m_fetched_data_lo);
+	s.process("fetched_data_hi", m_fetched_data_hi);
+}
+
 void Z80GB::execute()
 {
+	if(m_errors != nullptr && m_errors->has_error())
+	{
+		return;
+	}
+
+	if(m_bus == nullptr)
+	{
+		if(m_errors != nullptr)
+		{
+			m_errors->report(ErrorCode::CPU_BUS_NOT_CONNECTED);
+		}
+		return;
+	}
+
+	// Free halt-wake check (mooneye Step::Halt semantics): while halted, poll the
+	// interrupt line every tick; when set, wake immediately and start the dispatch
+	// in the SAME tick (the halt M-cycle that would have been spent is skipped).
+	if(m_is_halted && (m_ie & m_if) != 0)
+	{
+		m_is_halted = false;
+		m_end_opcode = true;
+		m_t_cycle = 1;
+		if(m_ime)
+		{
+			m_is_interruption_time = true;
+			m_ime = false;
+			m_m_cycle = 1;
+		}
+	}
+
 	if(m_is_interruption_time)
 	{
-		//An interruption does 5 m-cycles
+		// Interrupt dispatch: 4 M-cycles; the handler opcode fetch is the 5th
+		// M-cycle (done by the m_end_opcode path once m_is_interruption_time is
+		// cleared). The pending IF&IE is sampled before the low-byte push lands,
+		// matching mooneye-gb's write_cycle_intr: a write to IE during the
+		// low-byte push is too late to cancel the dispatch.
 		if(m_t_cycle == 4)
 		{
 			switch(m_m_cycle)
@@ -94,36 +210,52 @@ void Z80GB::execute()
 					m_bus->write(m_sp, (m_pc >> 8) & 0xFF);
 					break;
 				case 4:
+				{
+					u8 pending = m_if & m_ie;
+
 					m_sp--;
 					m_bus->write(m_sp, m_pc & 0xFF);
-					break;
-				case 5:
-					if((m_if & static_cast<u8>(InterruptType::IT_VBLANK)) && m_ie & static_cast<u8>(InterruptType::IT_VBLANK) )
+
+					if(pending == 0)
+					{
+						// The push wrote IE and cleared the pending interrupt:
+						// dispatch is cancelled, PC goes to 0x0000 and IF is
+						// left untouched.
+						m_pc = 0x0000;
+					}
+					else if(pending & static_cast<u8>(InterruptType::IT_VBLANK))
 					{
 						m_if &= ~static_cast<u8>(InterruptType::IT_VBLANK);
 						m_pc = 0x0040;
 					}
-					else if((m_if & static_cast<u8>(InterruptType::IT_LCD_STAT)) && m_ie & static_cast<u8>(InterruptType::IT_LCD_STAT) )
+					else if(pending & static_cast<u8>(InterruptType::IT_LCD_STAT))
 					{
 						m_if &= ~static_cast<u8>(InterruptType::IT_LCD_STAT);
 						m_pc = 0x0048;
 					}
-					else if((m_if & static_cast<u8>(InterruptType::IT_TIMER)) && m_ie & static_cast<u8>(InterruptType::IT_TIMER) )
+					else if(pending & static_cast<u8>(InterruptType::IT_TIMER))
 					{
 						m_if &= ~static_cast<u8>(InterruptType::IT_TIMER);
 						m_pc = 0x0050;
 					}
-					else if((m_if & static_cast<u8>(InterruptType::IT_SERIAL)) && m_ie & static_cast<u8>(InterruptType::IT_SERIAL) )
+					else if(pending & static_cast<u8>(InterruptType::IT_SERIAL))
 					{
 						m_if &= ~static_cast<u8>(InterruptType::IT_SERIAL);
 						m_pc = 0x0058;
 					}
-					else if((m_if & static_cast<u8>(InterruptType::IT_JOYPAD)) && m_ie & static_cast<u8>(InterruptType::IT_JOYPAD) )
+					else if(pending & static_cast<u8>(InterruptType::IT_JOYPAD))
 					{
 						m_if &= ~static_cast<u8>(InterruptType::IT_JOYPAD);
 						m_pc = 0x0060;
 					}
 
+					break;
+				}
+				case 5:
+					// Fifth dispatch M-cycle. mooneye-gb's InterruptDispatch fetches
+					// the handler opcode on its own cycle, separate from the handler
+					// instruction's execution; without this cycle the dispatch would
+					// run one M-cycle short (visible in intr_timing).
 					m_is_interruption_time = false;
 					break;
 			}
@@ -144,16 +276,6 @@ void Z80GB::execute()
 				m_m_cycle = 1;
 			}
 
-			if(m_t_cycle == 4)
-			{
-				m_t_cycle = 0;
-
-				if((m_ie & m_if) != 0)
-				{
-					m_is_halted = false;
-					m_end_opcode = true;
-				}
-			}
 			m_t_cycle++;
 		}
 		else
@@ -527,26 +649,17 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_l;
-
 								break;
 							case 2:
-								m_fetched_data_hi = m_h;
-								m_fetched_address = (m_fetched_data_hi << 8) | m_fetched_data_lo;
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
+								set_flag(FlagType::FL_N, false);
+								set_flag(FlagType::FL_Z, ((m_fetched_data_lo + 1) & 0xFF) == 0);
+								set_flag(FlagType::FL_H, (((m_fetched_data_lo & 0xF) + 1) & 0x10) == 0x10);
 								break;
 							case 3:
-							{
-								u8 value = m_bus->read(m_fetched_address);
-
-								set_flag(FlagType::FL_N, false);
-								set_flag(FlagType::FL_Z, ((value + 1) & 0xFF) == 0);
-								set_flag(FlagType::FL_H, (((value & 0xF) + 1) & 0x10) == 0x10);
-
-								m_bus->write(m_fetched_address, (value + 1) & 0xFF);
-
+								m_bus->write(read_register16(RegType::RT_HL), (m_fetched_data_lo + 1) & 0xFF);
 								m_end_opcode = true;
-							}
-							break;
+								break;
 						}
 						m_m_cycle++;
 						m_t_cycle = 0;
@@ -563,17 +676,15 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								set_flag(FlagType::FL_N, true);
 								set_flag(FlagType::FL_Z, ((m_fetched_data_lo - 1) & 0xFF) == 0);
 								set_flag(FlagType::FL_H, (((m_fetched_data_lo & 0xF) - 1) & 0x10) == 0x10);
-
-								m_bus->write(read_register16(RegType::RT_HL), (m_fetched_data_lo - 1) & 0xFF);
-
 								break;
 							case 3:
+								m_bus->write(read_register16(RegType::RT_HL), (m_fetched_data_lo - 1) & 0xFF);
 								m_end_opcode = true;
 								break;
 						}
@@ -592,13 +703,13 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
-								m_bus->write(read_register16(RegType::RT_HL), m_fetched_data_lo);
 								break;
 							case 3:
+								m_bus->write(read_register16(RegType::RT_HL), m_fetched_data_lo);
 								m_end_opcode = true;
 								break;
 						}
@@ -1117,10 +1228,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								u16 result = m_a + m_fetched_data_lo;
 
 								set_flag(FlagType::FL_Z, (result & 0xFF) == 0);
@@ -1190,10 +1301,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								u8 val_C = 0;
 								if(get_flag(FlagType::FL_C))
 								{
@@ -1269,10 +1380,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								u16 result = m_a - m_fetched_data_lo;
 
 								set_flag(FlagType::FL_Z, (result & 0xFF) == 0);
@@ -1342,10 +1453,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								u8 val_C = 0;
 								if(get_flag(FlagType::FL_C))
 								{
@@ -1421,10 +1532,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								m_a &= m_fetched_data_lo;
 
 								set_flag(FlagType::FL_Z, m_a == 0);
@@ -1493,10 +1604,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 
 							case 2:
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								m_a ^= m_fetched_data_lo;
 
 								set_flag(FlagType::FL_Z, m_a == 0);
@@ -1564,10 +1675,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								m_a |= m_fetched_data_lo;
 
 
@@ -1637,9 +1748,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(read_register16(RegType::RT_HL));
 								int n = static_cast<int>(m_a) - static_cast<int>(m_fetched_data_lo);
 
 								set_flag(FlagType::FL_Z, n == 0);
@@ -1707,9 +1818,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								set_flag(FlagType::FL_Z, ((m_a + m_fetched_data_lo) & 0xFF) == 0);
 								set_flag(FlagType::FL_N, false);
@@ -1746,14 +1857,15 @@ void Z80GB::execute()
 						switch(m_m_cycle)
 						{
 							case 1:
+								m_pc++;
+								break;
+							case 2:
 								m_fetched_data_lo = m_bus->read(m_sp);
 								m_sp++;
 								break;
-							case 2:
+							case 3:
 								m_fetched_data_hi = m_bus->read(m_sp);
 								m_sp++;
-								break;
-							case 3:
 								break;
 							case 4:
 								m_pc = (m_fetched_data_hi << 8) | m_fetched_data_lo;
@@ -1784,37 +1896,40 @@ void Z80GB::execute()
 								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 
-							case 2:
-							{
-								m_pc++;
+					case 2:
+					{
+						m_pc++;
 
-								RegType reg = decode_reg(m_fetched_data_lo & 0x07);
-								if(reg != RegType::RT_HL)
-								{
-									in_cb(reg, m_fetched_data_lo);
-									m_end_opcode = true;
-								}
-							}
-							break;
+						RegType reg = decode_reg(m_fetched_data_lo & 0x07);
+						if(reg != RegType::RT_HL)
+						{
+							in_cb(reg, m_fetched_data_lo);
+							m_end_opcode = true;
+						}
+					}
+					break;
 
-							case 3:
-							{
-								u8 bit_op = (m_fetched_data_lo >> 6) & 0x07;
+					case 3:
+					{
+						u8 bit_op = (m_fetched_data_lo >> 6) & 0x07;
 
-								if(bit_op == 1)
-								{
-									in_cb(RegType::RT_HL, m_fetched_data_lo);
-									m_end_opcode = true;
-								}
-							}
-							break;
+						// Read (HL) lands here (observed at M3, Gekkio).
+						m_fetched_data_hi = m_bus->read(read_register16(RegType::RT_HL));
+						if(bit_op == 1)	// BIT: no write; flags computed on the read
+						{
+							in_cb(RegType::RT_HL, m_fetched_data_lo);
+							m_end_opcode = true;
+						}
+					}
+					break;
 
-							case 4:
-							{
-								in_cb(RegType::RT_HL, m_fetched_data_lo);
-								m_end_opcode = true;
-							}
-							break;
+					case 4:
+					{
+						// RMW: write (HL) lands here (observed at M4, Gekkio)
+						in_cb(RegType::RT_HL, m_fetched_data_lo);
+						m_end_opcode = true;	// RMW ends after 4 M-cycles (16 T)
+					}
+					break;
 						}
 						m_m_cycle++;
 						m_t_cycle = 0;
@@ -1839,10 +1954,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 
 								u16 result;
@@ -1910,9 +2025,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								set_flag(FlagType::FL_Z, ((m_a - m_fetched_data_lo) & 0xFF) == 0);
 								set_flag(FlagType::FL_N, true);
@@ -1948,18 +2063,25 @@ void Z80GB::execute()
 						switch(m_m_cycle)
 						{
 							case 1:
+								m_pc++;
+								break;
+							case 2:
 								m_fetched_data_lo = m_bus->read(m_sp);
 								m_sp++;
 								break;
-							case 2:
+							case 3:
 								m_fetched_data_hi = m_bus->read(m_sp);
 								m_sp++;
 								break;
-							case 3:
-								break;
 							case 4:
 								m_pc = (m_fetched_data_hi << 8) | m_fetched_data_lo;
-								m_enabling_ime = true;
+								// RETI enables IME immediately: mooneye-gb reti()
+								// sets ime = true before prefetching, so a pending
+								// interrupt is dispatched at RETI's own boundary
+								// (unlike EI, deferred by one instruction).
+								m_ime = true;
+								m_enabling_ime = false;
+								m_next_m_cycle = false;
 								m_end_opcode = true;
 								break;
 						}
@@ -1987,10 +2109,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
 							{
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 
 								u8 value_C = 0;
@@ -2034,9 +2156,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								m_fetched_address = 0xFF00 + m_fetched_data_lo;
 								break;
@@ -2078,9 +2200,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								m_a &= m_fetched_data_lo;
 
@@ -2113,20 +2235,19 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								break;
 							case 3:
-								break;
-							case 4:
-							{
 								set_flag(FlagType::FL_Z, false);
 								set_flag(FlagType::FL_N, false);
 								set_flag(FlagType::FL_H, ((m_sp & 0x0F) + (m_fetched_data_lo & 0x0F)) >= 0x10);
 								set_flag(FlagType::FL_C, ((m_sp & 0xFF) + (m_fetched_data_lo & 0xFF)) >= 0x100);
-
+								break;
+							case 4:
+							{
 								m_sp = m_sp + static_cast<char>(m_fetched_data_lo);
 								m_end_opcode = true;
 							}
@@ -2156,18 +2277,18 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
-								m_fetched_data_hi = m_bus->read(m_pc);
 								break;
 							case 3:
+								m_fetched_data_hi = m_bus->read(m_pc);
 								m_pc++;
 								m_fetched_address = (m_fetched_data_hi << 8) | m_fetched_data_lo;
-								m_bus->write(m_fetched_address, m_a);
 								break;
 							case 4:
+								m_bus->write(m_fetched_address, m_a);
 								m_end_opcode = true;
 								break;
 						}
@@ -2186,9 +2307,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								m_a ^= m_fetched_data_lo;
 
@@ -2221,9 +2342,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								m_fetched_address = 0xFF00 + m_fetched_data_lo;
 								break;
@@ -2281,9 +2402,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								m_a |= m_fetched_data_lo;
 
@@ -2316,9 +2437,9 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								break;
 							case 3:
@@ -2369,18 +2490,18 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
-								m_fetched_data_hi = m_bus->read(m_pc);
 								break;
 							case 3:
+								m_fetched_data_hi = m_bus->read(m_pc);
 								m_pc++;
 								m_fetched_address = (m_fetched_data_hi << 8) | m_fetched_data_lo;
-								m_a = m_bus->read(m_fetched_address);
 								break;
 							case 4:
+								m_a = m_bus->read(m_fetched_address);
 								m_end_opcode = true;
 								break;
 						}
@@ -2412,10 +2533,10 @@ void Z80GB::execute()
 						{
 							case 1:
 								m_pc++;
-								m_fetched_data_lo = m_bus->read(m_pc);
 								break;
 
 							case 2:
+								m_fetched_data_lo = m_bus->read(m_pc);
 								m_pc++;
 								int result = (int)m_a - (int)m_fetched_data_lo;
 
@@ -2441,10 +2562,21 @@ void Z80GB::execute()
 				break;
 
 				default:
-					printf("Opcode not implemented: %02X\n", m_opcode);
-					exit(-1);
+					if(m_errors != nullptr)
+					{
+						m_errors->report(cpu_unimplemented_opcode(m_opcode), m_opcode);
+					}
+					return;
 
 			}
+		}
+
+		// m_t_cycle must stay in [0,4]: single-m-cycle opcodes leave it at 5
+		// on their last t-cycle. Normalise it to the start of the next m-cycle
+		// (1, as in the multi-m-cycle idiom "m_t_cycle = 0; m_t_cycle++").
+		if(m_t_cycle > 4)
+		{
+			m_t_cycle = 1;
 		}
 
 		// If interruptions are enabled
@@ -2570,14 +2702,25 @@ void Z80GB::connect_bus(IBus *bus)
 	m_bus = bus;
 }
 
+void Z80GB::connect_error_reporter(ErrorReporter* reporter)
+{
+	m_errors = reporter;
+
+	if(m_errors != nullptr && m_interrupt_controller == nullptr)
+	{
+		m_errors->report(ErrorCode::CPU_INTERRUPT_CONTROLLER_NULL);
+	}
+}
+
 u8 Z80GB::read_IF() const
 {
-	return m_if;
+	// The upper 3 bits of IF are unmapped and read as 1.
+	return m_if | 0xE0;
 }
 
 void Z80GB::write_IF(u8 val)
 {
-	m_if = val;
+	m_if = val & 0x1F;
 }
 
 u8 Z80GB::read_IE() const
@@ -2614,15 +2757,15 @@ void Z80GB::in_ld_r16_d16(RegType destiny)
 		{
 			case 1:
 				m_pc++;
-				m_fetched_data_lo = m_bus->read(m_pc);
 				break;
 			case 2:
+				m_fetched_data_lo = m_bus->read(m_pc);
 				m_pc++;
-				m_fetched_data_hi = m_bus->read(m_pc);
 				break;
 			case 3:
-				write_register16(destiny, (m_fetched_data_hi <<8) | m_fetched_data_lo );
+				m_fetched_data_hi = m_bus->read(m_pc);
 				m_pc++;
+				write_register16(destiny, (m_fetched_data_hi <<8) | m_fetched_data_lo );
 				m_end_opcode = true;
 				break;
 		}
@@ -2640,9 +2783,9 @@ void Z80GB::in_ld_r_addr(RegType destiny, u16 address)
 		{
 			case 1:
 				m_pc++;
-				m_fetched_data_lo = m_bus->read(address);
 				break;
 			case 2:
+				m_fetched_data_lo = m_bus->read(address);
 				write_register(destiny, m_fetched_data_lo);
 				m_end_opcode = true;
 				break;
@@ -2664,7 +2807,7 @@ void Z80GB::in_ld_addr_r(u16 address, RegType origin)
 				m_fetched_data_lo = read_register(origin);
 				break;
 			case 2:
-				m_bus->write(address, read_register(origin));
+				m_bus->write(address, m_fetched_data_lo);
 				m_end_opcode = true;
 				break;
 		}
@@ -2682,9 +2825,9 @@ void Z80GB::in_ld_r_d8(RegType destiny)
 		{
 			case 1:
 				m_pc++;
-				m_fetched_data_lo = m_bus->read(m_pc);
 				break;
 			case 2:
+				m_fetched_data_lo = m_bus->read(m_pc);
 				m_pc++;
 				write_register(destiny, m_fetched_data_lo);
 				m_end_opcode = true;
@@ -2930,9 +3073,9 @@ void Z80GB::in_jr(JpCond condition)
 		{
 			case 1:
 				m_pc++;
-				m_fetched_data_lo = m_bus->read(m_pc);
 				break;
 			case 2:
+				m_fetched_data_lo = m_bus->read(m_pc);
 				m_pc++;
 				if(	(condition == JpCond::JC_C && !get_flag(FlagType::FL_C)) ||
 					(condition == JpCond::JC_NC && get_flag(FlagType::FL_C)) ||
@@ -2962,13 +3105,13 @@ void Z80GB::in_jp(JpCond condition)
 		{
 			case 1:
 				m_pc++;
-				m_fetched_data_lo = m_bus->read(m_pc);
 				break;
 			case 2:
+				m_fetched_data_lo = m_bus->read(m_pc);
 				m_pc++;
-				m_fetched_data_hi = m_bus->read(m_pc);
 				break;
 			case 3:
+				m_fetched_data_hi = m_bus->read(m_pc);
 				m_pc++;
 				if(	(condition == JpCond::JC_C && !get_flag(FlagType::FL_C)) ||
 					(condition == JpCond::JC_NC && get_flag(FlagType::FL_C)) ||
@@ -2999,13 +3142,13 @@ void Z80GB::in_call(JpCond condition)
 		{
 			case 1:
 				m_pc++;
-				m_fetched_data_lo = m_bus->read(m_pc);
 				break;
 			case 2:
+				m_fetched_data_lo = m_bus->read(m_pc);
 				m_pc++;
-				m_fetched_data_hi = m_bus->read(m_pc);
 				break;
 			case 3:
+				m_fetched_data_hi = m_bus->read(m_pc);
 				m_pc++;
 				if(	(condition == JpCond::JC_C && !get_flag(FlagType::FL_C)) ||
 					(condition == JpCond::JC_NC && get_flag(FlagType::FL_C)) ||
@@ -3018,13 +3161,13 @@ void Z80GB::in_call(JpCond condition)
 				break;
 			case 4:
 				m_sp--;
-				m_bus->write(m_sp, (m_pc >> 8) & 0xFF);
 				break;
 			case 5:
+				m_bus->write(m_sp, (m_pc >> 8) & 0xFF);
 				m_sp--;
-				m_bus->write(m_sp, m_pc & 0xFF);
 				break;
 			case 6:
+				m_bus->write(m_sp, m_pc & 0xFF);
 				m_pc = (m_fetched_data_hi << 8) | m_fetched_data_lo;
 				m_end_opcode = true;
 				break;
@@ -3053,17 +3196,14 @@ void Z80GB::in_ret(JpCond condition)
 				{
 					m_end_opcode = true;
 				}
-				else
-				{
-					m_fetched_data_lo = m_bus->read(m_sp);
-					m_sp++;
-				}
 				break;
 			case 3:
-				m_fetched_data_hi = m_bus->read(m_sp);
+				m_fetched_data_lo = m_bus->read(m_sp);
 				m_sp++;
 				break;
 			case 4:
+				m_fetched_data_hi = m_bus->read(m_sp);
+				m_sp++;
 				break;
 			case 5:
 				m_pc = (m_fetched_data_hi << 8) | m_fetched_data_lo;
@@ -3087,13 +3227,13 @@ void Z80GB::in_rst(u16 address)
 				break;
 			case 2:
 				m_sp--;
-				m_bus->write(m_sp, (m_pc >> 8) & 0xFF);
 				break;
 			case 3:
+				m_bus->write(m_sp, (m_pc >> 8) & 0xFF);
 				m_sp--;
-				m_bus->write(m_sp, m_pc & 0xFF);
 				break;
 			case 4:
+				m_bus->write(m_sp, m_pc & 0xFF);
 				m_pc = address;
 				m_end_opcode = true;
 				break;
@@ -3115,13 +3255,13 @@ void Z80GB::in_push(RegType reg)
 				break;
 			case 2:
 				m_sp--;
-				m_bus->write(read_register16(RegType::RT_SP), (read_register16(reg) >> 8) & 0xFF);
 				break;
 			case 3:
+				m_bus->write(read_register16(RegType::RT_SP), (read_register16(reg) >> 8) & 0xFF);
 				m_sp--;
-				m_bus->write(read_register16(RegType::RT_SP), read_register16(reg) & 0xFF);
 				break;
 			case 4:
+				m_bus->write(read_register16(RegType::RT_SP), read_register16(reg) & 0xFF);
 				m_end_opcode = true;
 				break;
 		}
@@ -3139,14 +3279,14 @@ void Z80GB::in_pop(RegType reg)
 		{
 			case 1:
 				m_pc++;
+				break;
+			case 2:
 				m_fetched_data_lo = m_bus->read(m_sp);
 				m_sp++;
 				break;
-			case 2:
+			case 3:
 				m_fetched_data_hi = m_bus->read(m_sp);
 				m_sp++;
-				break;
-			case 3:
 				write_register16(reg, (m_fetched_data_hi << 8) | m_fetched_data_lo);
 				m_end_opcode = true;
 				break;
@@ -3230,7 +3370,9 @@ void Z80GB::in_cb(RegType reg, u8 data)
 	u8 value;
 	if(reg == RegType::RT_HL)
 	{
-		value = m_bus->read(read_register16(RegType::RT_HL));
+		// (HL) was already read by the CB dispatch (case 2 / M3); the RMW
+		// write phase (case 3 / M4) must not touch the bus again.
+		value = m_fetched_data_hi;
 	}
 	else
 	{

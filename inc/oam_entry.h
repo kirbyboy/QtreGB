@@ -1,7 +1,10 @@
 #ifndef QTREGB_OAM_ENTRY_H
 #define QTREGB_OAM_ENTRY_H
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class OAMEntry
 {
@@ -14,4 +17,6 @@ class OAMEntry
 		u8 m_flags;
 };
 
+
+} // namespace qtreGB
 #endif

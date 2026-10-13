@@ -6,13 +6,17 @@
 #include <queue>
 #include <array>
 #include <functional>
+#include <string>
 
-#include "common.h"
+#include "types.h"
 #include "memory.h"
 #include "fifo.h"
 #include "ibus.h"
 #include "oam_entry.h"
 #include "fetcher.h"
+
+namespace qtreGB
+{
 
 class LCD;
 
@@ -41,9 +45,11 @@ class PPU
 		PPU(LCD *lcd);
 		void ppu_init();
 		void ppu_tick();
+		void ppu_sync_lcd_power();	// Evaluates the LCDC bit 7 change synchronously at the FF40 write, before the CPU's end-of-opcode interrupt check (mooneye stat_lyc_onoff)
 
 		u8 ppu_oam_read(u16 address);
 		void ppu_oam_write(u16 address, u8 value);
+		void ppu_oam_write_dma(u16 address, u8 value);	// OAM DMA write: never blocked by the PPU bus locks (real DMA wins the bus)
 
 		u8 ppu_vram_read(u16 address);
 		void ppu_vram_write(u16 address, u8 value);
@@ -51,8 +57,10 @@ class PPU
 		const std::vector<u8>& get_video_buffer() const;
 		const std::vector<OAMEntry>& get_oam_line_entry() const;
 
+		void debug_fetcher_begin(u8 line) { m_fetcher.debug_begin(line); }
+		const std::vector<std::string>& debug_fetcher_log() const { return m_fetcher.debug_log(); }
+
 		void connect_bus(IBus* bus);
-		bool is_vram_locked();
 
 	private:
 		IBus *m_bus;
@@ -92,8 +100,21 @@ class PPU
 		void ppu_mode_xfer();
 		void ppu_mode_vblank();
 		void ppu_mode_hblank();
+		void ppu_lcd_on_line();	// Special line schedule used only for the first 3 lines after the LCD is turned on
+
+		void ppu_power_off();	// LCD turned off: force LY=0 and mode 0, reset pipeline state, no interrupts
+		void ppu_power_on();	// LCD turned on: line 0 starts in mode 0 without OAM scan, restart the LYC==LY comparison
+		void ppu_reset_line_state();	// Resets the per-line/pipeline state shared by the LCD power on/off transitions
 
 		void increment_ly();	// Increases lcd counter ly and launches interrupts if needed
+		void check_lyc();	// Compares LY with LYC, updates the flag and launches the interrupt if needed, must be called every time LY changes
+		void set_lyc_flag(bool ly_equals_lyc);	// Writes the LYC==LY flag and fires the STAT interrupt on its 0->1 edge
+		bool m_lcd_enabled;	// Last known LCDC.7 state, used to detect LCD power on/off transitions on each tick
+		bool m_stat_irq_line = false;	// Internal STAT IRQ line (latched), cleared on entering mode 3
+		void update_stat_irq();	// Update STAT IRQ with edge detection
+		u8 m_last_lyc;	// Last known LYC value, used to update the LYC==LY comparison when the game writes LYC
+		u8 m_lyc_update_countdown = 0;	// Dots left until the delayed LYC==LY flag update is applied (0 = no update pending)
+		bool m_lyc_update_value = false;	// Value written when the delayed LYC==LY flag update fires
 
 
 		u8 m_pushed_x;	// Indicates how many pixels have been pushed to screen
@@ -132,8 +153,15 @@ class PPU
 		Fetcher m_fetcher;
 
 		void request_interrupt(InterruptType IType);
-		bool m_is_vram_locked;
+		// While a lock is active the CPU reads $FF and writes are dropped (mooneye lcdon_timing-GS).
+		bool m_oam_read_locked = false;
+		bool m_vram_read_locked = false;
+		bool m_oam_write_locked = false;
+		bool m_vram_write_locked = false;
+		u8 m_lcd_on_line = 255;	// 0/1/2 = special lines after LCD power on, 255 = normal schedule
 
 };
 
+
+} // namespace qtreGB
 #endif

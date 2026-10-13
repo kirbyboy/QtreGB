@@ -1,5 +1,7 @@
 #include "oam_entry.h"
 
+using namespace qtreGB;
+
 OAMEntry::OAMEntry()
 {
 	m_flags = 0;

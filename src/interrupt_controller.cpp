@@ -1,5 +1,7 @@
 #include "interrupt_controller.h"
 
+using namespace qtreGB;
+
 void InterruptController::request_interrupt(InterruptType IType)
 {
 	u8 value = IF_read();

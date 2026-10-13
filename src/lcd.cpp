@@ -1,5 +1,8 @@
 #include "lcd.h"
 #include "QtreGB.h"
+#include <type_traits>
+
+using namespace qtreGB;
 
 void LCD::lcd_init()
 {
@@ -20,7 +23,7 @@ u8 LCD::read(u16 address)
 	switch(address)
 	{
 		case 0: return m_lcdc;
-		case 1: return m_lcds;
+		case 1: return m_lcds | 0x80;	// Bit 7 of STAT always reads 1 on DMG, required by mooneye lcdon/stat tests
 		case 2: return m_scroll_y;
 		case 3: return m_scroll_x;
 		case 4: return m_ly;
@@ -39,7 +42,7 @@ void LCD::write(u16 address, u8 value)
 	switch(address)
 	{
 		case 0: m_lcdc = value; break;
-		case 1: m_lcds = (value & 0xF8) | (m_lcds & 0x07); break; // PPU mode  and LYC == LY are read only
+		case 1: m_lcds = (value & 0x78) | (m_lcds & 0x07); break; // PPU mode  and LYC == LY are read only, bit 7 unused
 		case 2: m_scroll_y = value; break;
 		case 3: m_scroll_x = value; break;
 		case 4: /*m_ly = value*/; break;	// read_only
@@ -160,5 +163,5 @@ void LCD::set_lcds_lyc(bool value)
 
 bool LCD::get_lcds_stat_int(StatSRC stat)
 {
-	return (m_lcds & static_cast<underlying_type<StatSRC>::type>(stat)) != 0;
+	return (m_lcds & static_cast<std::underlying_type<StatSRC>::type>(stat)) != 0;
 }

@@ -13,9 +13,11 @@
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include "ui.h"
-#include "QtreGB.h" // tu emulador
+#include "QtreGB.h" // your emulator
 
-// IDs globales (puedes ponerlos en tu clase/emulador)
+using namespace qtreGB;
+
+// Global IDs (you can put them in your class/emulator)
 GLuint quadVAO = 0;
 GLuint quadVBO = 0;
 GLuint shaderProgram = 0;
@@ -59,11 +61,11 @@ GLuint CompileShader(GLenum type, const char* src) {
     return shader;
 }
 
-// --- Inicialización del quad y shader ---
+// --- Quad and shader initialization ---
 void InitQuadShader() {
-    if(quadVAO != 0) return; // ya inicializado
+    if(quadVAO != 0) return; // already initialized
 
-    // Quad de 2D (-1..1)
+    // 2D quad (-1..1)
     float vertices[] = {
         // positions   // texcoords
         -1.f, -1.f,   0.f, 0.f,
@@ -124,7 +126,7 @@ void InitQuadShader() {
     glDeleteShader(frag);
 }
 
-// --- Render del quad con textura ---
+// --- Render the quad with texture ---
 void RenderQuadWithTexture(GLuint texture) {
     InitQuadShader();
 
@@ -339,7 +341,7 @@ void ui_handle_events(QtreGB *emulator)
 		{
 
 			#ifdef ENABLE_LOG
-				Logger::instance().dump(); // imprime CSV
+				Logger::instance().dump(); // prints CSV
 			#endif
 			exit(-1);
 		}
@@ -363,7 +365,7 @@ void ui_init_imgui()
         exit(-1);
     }
 
-    window = SDL_CreateWindow("Emulador", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+    window = SDL_CreateWindow("Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               PPU::XRES * scale, PPU::YRES * scale, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if(!window)
     {
@@ -371,7 +373,7 @@ void ui_init_imgui()
         exit(-1);
     }
 
-    // Crear SDL_Renderer
+    // Create SDL_Renderer
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if(!renderer)
     {
@@ -379,7 +381,7 @@ void ui_init_imgui()
         exit(-1);
     }
 
-    // Crear SDL_Texture para el framebuffer del emulador
+    // Create SDL_Texture for the emulator framebuffer
     texture = SDL_CreateTexture(renderer,
                                 SDL_PIXELFORMAT_RGBA32,
                                 SDL_TEXTUREACCESS_STREAMING,
@@ -390,20 +392,20 @@ void ui_init_imgui()
         exit(-1);
     }
 
-    // Inicializar ImGui con SDL_Renderer backend
+    // Initialize ImGui with the SDL_Renderer backend
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer2_Init(renderer);  // usa el backend SDL_Renderer2
+    ImGui_ImplSDLRenderer2_Init(renderer);  // uses the SDL_Renderer2 backend
     ImGui::StyleColorsDark();
 }
 
 void ui_render(QtreGB* emu)
 {
-    // --- Control de framerate ---
+    // --- Framerate control ---
     static u32 prev_frame_time = SDL_GetTicks();
     const u32 target_frame_time = 1000 / 60;
 
@@ -417,7 +419,7 @@ void ui_render(QtreGB* emu)
 	}
     prev_frame_time = SDL_GetTicks();
 
-    // --- Procesar eventos SDL ---
+    // --- Process SDL events ---
     SDL_Event event;
     while(SDL_PollEvent(&event))
     {
@@ -429,13 +431,13 @@ void ui_render(QtreGB* emu)
 
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 
-    // --- Actualizar la textura OpenGL con el framebuffer del emulador ---
+    // --- Update the OpenGL texture with the emulator framebuffer ---
     std::vector<u8> video_buffer = emu->m_ppu.get_video_buffer();
     std::vector<u32> video_buffer_color(video_buffer.size());
     for(size_t i = 0; i < video_buffer.size(); ++i)
         video_buffer_color[i] = tile_colors[video_buffer[i]];
 
-    // --- Empezar frame ImGui ---
+    // --- Begin ImGui frame ---
     ImGui_ImplSDLRenderer2_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
@@ -447,33 +449,33 @@ void ui_render(QtreGB* emu)
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
-    // --- Ventana principal + menú ---
-    ImGui::Begin("Ventana Principal", nullptr, window_flags);
+    // --- Main window + menu ---
+    ImGui::Begin("Main Window", nullptr, window_flags);
     if (ImGui::BeginMainMenuBar())
     {
-        if (ImGui::BeginMenu("Archivo"))
+        if (ImGui::BeginMenu("File"))
         {
-            if (ImGui::MenuItem("Abrir...")) {
-                // Función para abrir ROM
+            if (ImGui::MenuItem("Open...")) {
+                // Function to open ROM
             }
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
     }
 
-	// Crear DockSpace
+	// Create DockSpace
 	ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
 	ImGui::DockSpace(dockspace_id, ImVec2(0,0), ImGuiDockNodeFlags_PassthruCentralNode);
 
 	ImGui::End();
 	ImGui::PopStyleVar(2);
 
-    ImGui::Begin("Pantalla");
+    ImGui::Begin("Screen");
 	SDL_UpdateTexture(texture, NULL, video_buffer_color.data(), PPU::XRES * sizeof(u32));
 	ImGui::Image((ImTextureID)(intptr_t)texture, ImVec2(160*4, 144*4));
 	ImGui::End();
 
-    // --- Render SDL ---
+    // --- SDL render ---
     SDL_SetRenderDrawColor(renderer, 25, 25, 25, 255);
     SDL_RenderClear(renderer);
 

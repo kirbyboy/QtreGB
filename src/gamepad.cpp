@@ -1,5 +1,7 @@
 #include "gamepad.h"
 
+using namespace qtreGB;
+
 void Gamepad::set_interrupt_callback(InterruptCallback cb)
 {
 	m_interrupt_handler = cb;

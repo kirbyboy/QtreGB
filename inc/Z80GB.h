@@ -1,16 +1,62 @@
 #ifndef QTREGB_Z80GB_H
 #define QTREGB_Z80GB_H
 
-#include "common.h"
+#include "types.h"
 #include "ibus.h"
 #include "icpu_registers.h"
 #include "interrupt_controller.h"
+#include "tagged_serializer.h"
+
+namespace qtreGB
+{
+
+class ErrorReporter;
 
 class Z80GB : public ICPURegisters
 {
 	public:
 
-		// Everything is public, nothing to hide
+		Z80GB(InterruptController* interrupt_controller);
+
+		void tick();
+		void reset();
+
+		u8 read_register(RegType reg_type);
+		void write_register(RegType reg_type, u8 value);
+		u16 read_register16(RegType reg_type);
+		void write_register16(RegType reg_type, u16 value);
+
+		void connect_bus(IBus* bus);
+		void connect_error_reporter(ErrorReporter* reporter);
+
+		// Interrupt management
+		u8 read_IF() const override;
+		void write_IF(u8 val) override;
+		u8 read_IE() const override;
+		void write_IE(u8 val) override;
+		void request_interrupt(InterruptType IType);
+
+		// --- State observable from outside the CPU ---
+		bool is_end_m_cycle() const;	// m-cycle edge: m_t_cycle % 4 == 0
+		bool is_end_opcode() const;
+		bool is_interruption_time() const;
+
+		// --- Savestates / access backdoor ---
+		// Mirror of the observable registers. It is consumed in the same order
+		// as Z80GB::serialize, so it works as a prefix of a snapshot:
+		// writing to State and serializing it allows injecting values into the CPU.
+		struct State
+		{
+			u8 a, f, b, c, d, e, h, l;
+			u16 pc, sp;
+
+			void serialize(TaggedSerializer& s);
+		};
+
+		void serialize(TaggedSerializer& s);
+
+	private:
+
 		// Registers
 		u8 m_a;
 		u8 m_f;
@@ -39,28 +85,8 @@ class Z80GB : public ICPURegisters
 		u8 m_m_cycle;	// actual m-cycle of the actual opcode => 1 m-cycle = 4 t-cycles
 		bool m_end_opcode;	// indicates if actual opcode has ended.
 
-		Z80GB(InterruptController* interrupt_controller);
-
-		void tick();
-		void reset();
-
-		u8 read_register(RegType reg_type);
-		void write_register(RegType reg_type, u8 value);
-		u16 read_register16(RegType reg_type);
-		void write_register16(RegType reg_type, u16 value);
-
-		void connect_bus(IBus* bus);
-
-		// Interrupt management
-		u8 read_IF() const override;
-		void write_IF(u8 val) override;
-		u8 read_IE() const override;
-		void write_IE(u8 val) override;
-		void request_interrupt(InterruptType IType);
-
-	private:
-
 		IBus *m_bus = nullptr;	// address bus
+		ErrorReporter *m_errors = nullptr;	// central error reporter, not owned
 
 		u16 m_fetched_address;	// just a var to put temporary addresses between ticks
 		u8 m_fetched_data_lo;	// just a var to put temporary values between ticks
@@ -74,7 +100,7 @@ class Z80GB : public ICPURegisters
 		void in_ld_r_r(RegType destiny, RegType origin);	// LD instruction, register to register
 		void in_ld_r16_d16(RegType destiny);	// LD instruction, inmediate 2 bytes to 16 bits register
 		void in_ld_r_addr(RegType destiny, u16 address);	// LD instruction, address content into register
-		void in_ld_addr_r(u16 address, RegType origin);	// LD instruction, register value into address pointer
+		void in_ld_addr_r(u16 address, RegType origin);	// LD instruction, address content into register
 		void in_ld_r_d8(RegType destiny);	// LD instruction, inmediate byte into register
 		void in_ld_d16_r16(RegType origin); // LD instruction, register value into address indicated by 2 inmediate bytes.
 
@@ -114,4 +140,6 @@ class Z80GB : public ICPURegisters
 };
 
 
+
+} // namespace qtreGB
 #endif

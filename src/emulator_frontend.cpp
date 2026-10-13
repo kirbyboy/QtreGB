@@ -3,11 +3,14 @@
 #include "emulator_frontend.h"
 #include "tinyfiledialogs.h"
 
+using namespace qtreGB;
+using namespace std;
+
 constexpr u32 GB_PALETTE[4] = {
-    0xFFFFFFFF, // Blanco → color 0
-    0xFFAAAAAA, // Gris claro → color 1
-    0xFF555555, // Gris oscuro → color 2
-    0xFF000000  // Negro → color 3
+    0xFFFFFFFF, // White -> color 0
+    0xFFAAAAAA, // Light gray -> color 1
+    0xFF555555, // Dark gray -> color 2
+    0xFF000000  // Black -> color 3
 };
 
 EmulatorFrontend::EmulatorFrontend(IGuiBackend *backend) :
@@ -19,7 +22,7 @@ m_backend(backend), m_show_layers_window(false)
 void EmulatorFrontend::draw_main_window()
 {
 
-    // Flags para que la ventana principal no tenga bordes ni título
+    // Flags so the main window has no borders or title bar
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar
                                   | ImGuiWindowFlags_NoDocking
                                   | ImGuiWindowFlags_NoTitleBar
@@ -40,14 +43,14 @@ void EmulatorFrontend::draw_main_window()
     ImGui::Begin("MainWindow", nullptr, window_flags);
     ImGui::PopStyleVar(2);
 
-    // Menú superior
+    // Top menu
     if (ImGui::BeginMenuBar())
     {
-		if (ImGui::BeginMenu("Archivo"))
+		if (ImGui::BeginMenu("File"))
 		{
-			if (ImGui::MenuItem("Abrir ROM..."))
+			if (ImGui::MenuItem("Open ROM..."))
 			{
-				std::string filename = "../roms/01-special.gb"; // tu función de diálogo de archivos
+				std::string filename = "../roms/01-special.gb"; // your file dialog function
 				if (!filename.empty())
 				{
 					m_emulator.reset(new EmulatorInstance(m_backend));
@@ -107,7 +110,7 @@ void EmulatorFrontend::draw_main_window()
 		ImGui::EndMenuBar();
 	}
 
-    // --- Dibujar el emulador directamente ---
+    // --- Draw the emulator directly ---
     if (m_emulator)
     {
         void* textureId = m_emulator->get_texture_ID();
@@ -115,19 +118,19 @@ void EmulatorFrontend::draw_main_window()
         int nativeW = texSize.first;
         int nativeH = texSize.second;
 
-        // Área completa disponible dentro de la ventana principal
+        // Full area available inside the main window
         ImVec2 avail = ImGui::GetContentRegionAvail();
 
-        // Escalar para mantener aspecto
+        // Scale to keep aspect ratio
         float scale = std::min(avail.x / nativeW, avail.y / nativeH);
         ImVec2 finalSize(nativeW * scale, nativeH * scale);
 
-        // Centrar la imagen
+        // Center the image
         ImVec2 cursor = ImGui::GetCursorPos();
         ImVec2 offset((avail.x - finalSize.x) * 0.5f, (avail.y - finalSize.y) * 0.5f);
         ImGui::SetCursorPos(ImVec2(cursor.x + offset.x, cursor.y + offset.y));
 
-        // Dibujar el framebuffer del emulador
+        // Draw the emulator framebuffer
         ImGui::Image(textureId, finalSize);
     }
 
@@ -136,7 +139,7 @@ void EmulatorFrontend::draw_main_window()
 		draw_layers_window();
 	}
 
-	ImGui::End(); // Fin de MainWindow
+	ImGui::End(); // End of MainWindow
 }
 
 void EmulatorFrontend::handle_input()
@@ -166,30 +169,30 @@ std::string EmulatorFrontend::open_rom_dialog()
 
 void EmulatorFrontend::draw_layers_window()
 {
-	// Abre la ventana con título
+	// Open the window with a title
 	if (!ImGui::Begin("Layers Window", &m_show_layers_window))
 	{
 		ImGui::End();
 		return;
 	}
 
-	// Crear pestañas
+	// Create tabs
 	if (ImGui::BeginTabBar("LayersTabBar"))
 	{
-		// Pestaña BG
+		// BG tab
 		if (ImGui::BeginTabItem("BG"))
 		{
-			// Llamamos a un método que devuelve la textura de la capa BG
+			// Call a method that returns the BG layer texture
 		//	SDL_Texture* bg_tex = get_emulator()->get_bg_texture();
 		//	if (bg_tex)
 		//	{
-		//		ImGui::Image(bg_tex, ImVec2(160, 144)); // tamaño ejemplo
+		//		ImGui::Image(bg_tex, ImVec2(160, 144)); // example size
 		//	}
-			ImGui::Text("hola1");
+			ImGui::Text("hello1");
 			ImGui::EndTabItem();
 		}
 
-		// Pestaña Window
+		// Window tab
 		if (ImGui::BeginTabItem("Window"))
 		{
 		//	SDL_Texture* window_tex = get_emulator()->get_window_texture();
@@ -197,11 +200,11 @@ void EmulatorFrontend::draw_layers_window()
 		//	{
 		//		ImGui::Image(window_tex, ImVec2(160, 144));
 		//	}
-			ImGui::Text("hola2");
+			ImGui::Text("hello2");
 			ImGui::EndTabItem();
 		}
 
-		// Pestaña Sprites
+		// Sprites tab
 		if (ImGui::BeginTabItem("Sprites"))
 		{
 		//	SDL_Texture* sprites_tex = get_emulator()->get_sprites_texture();
@@ -209,7 +212,7 @@ void EmulatorFrontend::draw_layers_window()
 		//	{
 		//		ImGui::Image(sprites_tex, ImVec2(160, 144));
 		//	}
-			ImGui::Text("hola3");
+			ImGui::Text("hello3");
 			ImGui::EndTabItem();
 		}
 

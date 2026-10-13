@@ -11,15 +11,13 @@
 #include "QtreGB.h"
 #include "ibackend.h"
 
-// Resolución de Game Boy
+using namespace qtreGB;
+
+// Game Boy resolution
 constexpr int GB_XRES = 160;
 constexpr int GB_YRES = 144;
 
 constexpr int SCALE = 4;
-
-// Tipos básicos
-using u8 = uint8_t;
-using u32 = uint32_t;
 
 enum class GbButton : u8
 {
@@ -50,7 +48,7 @@ class EmulatorInstance
 		void release_button(u8 button);
 		bool is_button_pressed(u8 button) const;
 
-		void load_cart(vector<u8> cart);
+		void load_cart(std::vector<u8> cart);
 		void tick();
 		bool get_frame_ready();
 

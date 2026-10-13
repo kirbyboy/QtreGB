@@ -1,5 +1,7 @@
 #include "operations.h"
 
+using namespace qtreGB;
+
 u8 Operations::set_bit(u8 value, u8 position, bool bit_value)
 {
 	if(position < 8)

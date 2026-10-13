@@ -1,7 +1,10 @@
 #ifndef QTREGB_OPERATIONS_H
 #define QTREGB_OPERATIONS_H
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class Operations
 {
@@ -10,4 +13,6 @@ class Operations
 		static bool get_bit(u8 value, u8 position);
 };
 
+
+} // namespace qtreGB
 #endif

@@ -4,6 +4,9 @@
 #include "QtreGB.h"
 #include "lcd.h"
 #include "logger.h"
+#include "utils.h"
+
+using namespace qtreGB;
 
 Fetcher::Fetcher(FIFO & bgw_fifo, FIFO & spr_fifo) :
 m_bgw_fifo(bgw_fifo),
@@ -23,6 +26,14 @@ void Fetcher::reset()
 	m_bgw_fifo.clear();
 
 	is_window = (m_lcd->m_ly >= m_lcd->m_win_y);
+
+	if(m_debug_enabled)
+	{
+		debug_trace("reset ly=" + std::to_string(static_cast<int>(m_lcd->m_ly)) +
+			" win_y=" + std::to_string(static_cast<int>(m_lcd->m_win_y)) +
+			" is_window=" + std::to_string(is_window) +
+			" lcdc=" + to_hex(m_lcd->m_lcdc));
+	}
 }
 
 void Fetcher::set_state(FetchEntry state)
@@ -50,15 +61,11 @@ void Fetcher::tick()
 	}
 	else
 	{
-		//check_obj(m_current_x);
-		//m_mode = FetchMode::FS_BGD;
-		//check_mode();
+		check_obj(m_current_x);
+		check_mode();
 	}
 
-	if(m_mode == FetchMode::FS_BGD)
-	{
-		sm_bg();
-	}
+	sm_bg();
 
 /*
 	switch(m_current_state)
@@ -121,6 +128,8 @@ void Fetcher::tick()
 
 void Fetcher::check_obj(u8 x)
 {
+	if(m_mode == FetchMode::FS_OBJ)
+		return;
 	for(u8 i= 0; i < m_oam_line_entries.size(); i++)
 	{
 		OAM_line_Entry& entry = m_oam_line_entries.get_entry(i);
@@ -161,6 +170,39 @@ void Fetcher::set_current_x(u8 x)
 void Fetcher::set_warming(bool warming)
 {
 	m_warming = warming;
+}
+
+void Fetcher::debug_begin(u8 line)
+{
+	m_debug_enabled = true;
+	m_debug_line = line;
+	m_debug_log.clear();
+}
+
+void Fetcher::debug_end()
+{
+	m_debug_enabled = false;
+}
+
+void Fetcher::debug_set_line(u8 line)
+{
+	m_debug_line = line;
+}
+
+const std::vector<std::string>& Fetcher::debug_log() const
+{
+	return m_debug_log;
+}
+
+void Fetcher::debug_trace(const std::string& entry)
+{
+	if(m_debug_enabled && m_lcd->m_ly == m_debug_line)
+	{
+		if(m_debug_log.size() < 4096)
+		{
+			m_debug_log.push_back(entry);
+		}
+	}
 }
 
 void Fetcher::load_oam_entries(std::vector<OAMEntry> entries)
@@ -267,7 +309,7 @@ void Fetcher::fill_map_background()
 	else
 	{
 		tile_map_y = m_lcd->m_ly - m_lcd->m_win_y;
-		m_tile_map_bg = m_bus->read(m_lcd->get_lcdc_win_map_area() + ((m_current_x + 7 - m_lcd->m_win_x) / 8) + ((m_window_line / 8) * 32));
+		m_tile_map_bg = m_bus->read(m_lcd->get_lcdc_win_map_area() + (m_bg_tile_to_push & 0x1F) + ((m_window_line / 8) * 32));
 
 		if(m_lcd->get_lcdc_bgw_data_area() == 0x8800)
 		{
@@ -275,7 +317,18 @@ void Fetcher::fill_map_background()
 		}
 	}
 
-
+	if(m_debug_enabled)
+	{
+		debug_trace("fill_map mode=" + std::to_string(static_cast<int>(m_bg_mode)) +
+			" ly=" + std::to_string(static_cast<int>(m_lcd->m_ly)) +
+			" sys=" + std::to_string(static_cast<int>(m_lcd->m_scroll_y)) +
+			" tile_map_y=" + std::to_string(static_cast<int>(tile_map_y)) +
+			" wx=" + std::to_string(static_cast<int>(m_lcd->m_win_x)) +
+			" wy=" + std::to_string(static_cast<int>(m_lcd->m_win_y)) +
+			" wl=" + std::to_string(static_cast<int>(m_window_line)) +
+			" tile_to_push=" + std::to_string(static_cast<int>(m_bg_tile_to_push)) +
+			" tile_map_bg=" + to_hex(m_tile_map_bg));
+	}
 
 	LOG("fill_map_background tilemap", to_hex(m_tile_map_bg));
 }
@@ -319,7 +372,7 @@ void Fetcher::load_data_background(u8 offset)
 	}
 	else
 	{
-		tile_data_y = m_lcd->m_ly - m_lcd->m_win_y;
+		tile_data_y = m_window_line % 8;
 		data = m_bus->read(m_lcd->get_lcdc_bgw_data_area() + (m_tile_map_bg * 16) + (tile_data_y * 2) + offset);
 	}
 
@@ -330,6 +383,15 @@ void Fetcher::load_data_background(u8 offset)
 	else
 	{
 		m_data_hi_bg = data;
+	}
+
+	if(m_debug_enabled)
+	{
+		debug_trace("load_data mode=" + std::to_string(static_cast<int>(m_bg_mode)) +
+			" offset=" + std::to_string(static_cast<int>(offset)) +
+			" addr=" + to_hex(m_lcd->get_lcdc_bgw_data_area() + (m_tile_map_bg * 16) + tile_data_y + offset) +
+			" tile_data_y=" + std::to_string(static_cast<int>(tile_data_y)) +
+			" data=" + to_hex(data));
 	}
 }
 
@@ -389,6 +451,13 @@ bool Fetcher::push_data_background()
 	}
 
 	m_bg_tile_to_push++;
+
+	if(m_debug_enabled)
+	{
+		debug_trace("push_bg fifo_empty=1 lo=" + to_hex(m_data_lo_bg) +
+			" hi=" + to_hex(m_data_hi_bg) +
+			" tile_to_push=" + std::to_string(static_cast<int>(m_bg_tile_to_push)));
+	}
 
 	return true;
 }
@@ -477,6 +546,13 @@ void Fetcher::check_mode()
 				m_bg_mode = FetchModeBG::FS_BG_WIN;
 				m_state_bg = FetchEntry::FS_TILE;
 				m_bg_need_recalculate = true;
+				m_bg_tile_to_push = 0;
+
+				if(m_debug_enabled)
+				{
+					debug_trace("check_mode -> WIN cx=" + std::to_string(static_cast<int>(m_current_x)) +
+						" win_x=" + std::to_string(static_cast<int>(m_lcd->m_win_x)));
+				}
 			}
 		}
 		// If it's WIN mode, check to return to background mode
@@ -493,6 +569,12 @@ void Fetcher::check_mode()
 				m_bg_mode = FetchModeBG::FS_BG_BGD;
 				m_state_bg = FetchEntry::FS_TILE;
 				m_bg_need_recalculate = true;
+
+				if(m_debug_enabled)
+				{
+					debug_trace("check_mode -> BGD cx=" + std::to_string(static_cast<int>(m_current_x)) +
+						" win_x=" + std::to_string(static_cast<int>(m_lcd->m_win_x)));
+				}
 			}
 		}
 	}
@@ -500,6 +582,55 @@ void Fetcher::check_mode()
 
 void Fetcher::sm_bg()
 {
+	if(m_debug_enabled)
+	{
+		debug_trace("sm_bg state=" + std::to_string(static_cast<int>(m_state_bg)) +
+			" mode=" + std::to_string(static_cast<int>(m_bg_mode)) +
+			" warming=" + std::to_string(m_warming) +
+			" cx=" + std::to_string(static_cast<int>(m_current_x)) +
+			" fifo=" + std::to_string(m_bgw_fifo.size()));
+	}
+
+	if(m_mode == FetchMode::FS_OBJ)
+	{
+		switch(m_current_state)
+		{
+			case FetchEntry::FS_TILE:
+			{
+				fill_map_sprite();
+				m_current_state = FetchEntry::FS_DATA0;
+			}
+			break;
+
+			case FetchEntry::FS_DATA0:
+			{
+				load_data_sprite(0);
+				m_current_state = FetchEntry::FS_DATA1;
+			}
+			break;
+
+			case FetchEntry::FS_DATA1:
+			{
+				load_data_sprite(1);
+				m_current_state = FetchEntry::FS_PUSH;
+			}
+			break;
+
+			case FetchEntry::FS_PUSH:
+			{
+				bool result = push_data_sprite();
+				if(result)
+				{
+					m_current_state = FetchEntry::FS_TILE;
+					m_state_bg = FetchEntry::FS_TILE;
+					m_mode = FetchMode::FS_BGD;
+				}
+			}
+			break;
+		}
+		return;
+	}
+
 	switch(m_state_bg)
 	{
 		case FetchEntry::FS_TILE:

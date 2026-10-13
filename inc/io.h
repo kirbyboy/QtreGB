@@ -1,7 +1,10 @@
 #ifndef QTREGB_IO_H
 #define QTREGB_IO_H
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class IO
 {
@@ -14,4 +17,6 @@ class IO
 		//u8 m_
 };
 
+
+} // namespace qtreGB
 #endif

@@ -1,7 +1,10 @@
 #ifndef QTREGB_IBUS_H
 #define QTREGB_IBUS_H
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class IBus
 {
@@ -11,4 +14,6 @@ class IBus
 		virtual void write(u16 addr, u8 value) = 0;
 };
 
+
+} // namespace qtreGB
 #endif

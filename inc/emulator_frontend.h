@@ -5,10 +5,6 @@
 #include "emulator_instance.h"
 #include "ibackend.h"
 
-// basic types
-using u8 = uint8_t;
-using u32 = uint32_t;
-
 class EmulatorFrontend
 {
 	public:

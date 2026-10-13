@@ -1,5 +1,7 @@
 #include "emulator_instance.h"
 
+using namespace qtreGB;
+
 EmulatorInstance::EmulatorInstance(IGuiBackend *backend) :
 m_backend(backend),
 m_is_frame_ready(false),
@@ -7,7 +9,7 @@ m_is_emulator_ready(false)
 {
 	m_frame_buffer.resize(GB_XRES * SCALE * GB_YRES * SCALE, 0);
 
-	// Crear textura usando el backend
+	// Create texture using the backend
 	if(m_backend)
 	{
 		m_texture_id = m_backend->createTexture(GB_XRES * SCALE, GB_YRES * SCALE);
@@ -18,7 +20,7 @@ m_is_emulator_ready(false)
 
 EmulatorInstance::~EmulatorInstance()
 {
-	// El backend puede encargarse de destruir la textura
+	// The backend may handle destroying the texture
 	if(m_backend && m_texture_id)
 	{
 		m_backend->destroyTexture(m_texture_id);
@@ -84,7 +86,7 @@ bool EmulatorInstance::is_button_pressed(u8 button) const
 	return false;
 }
 
-void EmulatorInstance::load_cart(vector<u8> cart)
+void EmulatorInstance::load_cart(std::vector<u8> cart)
 {
 	m_emulator = std::unique_ptr<QtreGB>(new QtreGB());
 	m_emulator->load_cart(cart);
@@ -134,7 +136,7 @@ void EmulatorInstance::fill_rect(int x, int y, int w, int h, u32 color)
     int maxW = GB_XRES * SCALE;
     int maxH = GB_YRES * SCALE;
 
-    // Limitar los bordes del rectángulo
+    // Clamp the rectangle borders
     int x0 = std::max(0, x);
     int y0 = std::max(0, y);
     int x1 = std::min(x + w, maxW);

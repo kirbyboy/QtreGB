@@ -1,5 +1,7 @@
 #include "io.h"
 
+using namespace qtreGB;
+
 static u8 ly = 0;
 
 u8 IO::io_read(u16 address)

@@ -1,7 +1,10 @@
 #ifndef QTREGB_ICPU_REGISTERS_H
 #define QTREGB_ICPU_REGISTERS_H
 
-#include "common.h"
+#include "types.h"
+
+namespace qtreGB
+{
 
 class ICPURegisters
 {
@@ -15,4 +18,6 @@ class ICPURegisters
 		virtual void write_IE(u8 value) = 0;
 };
 
+
+} // namespace qtreGB
 #endif

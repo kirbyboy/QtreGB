@@ -1,5 +1,7 @@
 #include "fifo.h"
 
+using namespace qtreGB;
+
 using namespace std;
 
 FIFOElement::FIFOElement()

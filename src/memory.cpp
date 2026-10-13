@@ -1,5 +1,7 @@
 #include "memory.h"
 
+using namespace qtreGB;
+
 using namespace std;
 
 Memory::Memory(u32 size) : m_ram(vector<u8>(size))

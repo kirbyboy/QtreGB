@@ -1,5 +1,7 @@
-#include "common.h"
+#include "types.h"
 #include "cart_mbc1.h"
+
+using namespace qtreGB;
 
 using namespace std;
 
@@ -38,15 +40,17 @@ u8 CartMBC1::read(u16 address)
 {
 	if(address < 0x4000)
 	{
+		u8 result;
 		if(m_rom[0x0148] > 4 && m_banking_mode)	// 1Mb cartridges or more and mode 1
 		{
 			u8 rom_bank = m_rom_ram_bank << 4 | m_rom_bank;
-			return m_rom[(rom_bank * 0x4000) + address];
+			result = m_rom[(rom_bank * 0x4000) + address];
 		}
 		else
 		{
-			return m_rom[address];
+			result = m_rom[address];
 		}
+		return result;
 	}
 	else if(address < 0x8000)
 	{

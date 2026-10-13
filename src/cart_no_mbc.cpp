@@ -1,5 +1,7 @@
-#include "common.h"
+#include "types.h"
 #include "cart_no_mbc.h"
+
+using namespace qtreGB;
 
 using namespace std;
 

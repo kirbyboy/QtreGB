@@ -3,9 +3,12 @@
 
 #include <vector>
 
-#include "common.h"
+#include "types.h"
 #include "internal_cart.h"
 #include "memory.h"
+
+namespace qtreGB
+{
 
 class NoMBCCart : public InternalCart
 {
@@ -26,4 +29,6 @@ class NoMBCCart : public InternalCart
 		std::vector<Memory> m_ram;
 };
 
+
+} // namespace qtreGB
 #endif

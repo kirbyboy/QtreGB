@@ -9,6 +9,9 @@
 
 #include "QtreGB.h"
 
+using namespace qtreGB;
+using namespace std;
+
 #if 1
 	static string serial;
 #endif
@@ -29,9 +32,11 @@ QtreGB::QtreGB() :
 	m_gamepad(Gamepad()),
 	m_bus(Bus(&m_cart, &m_timer, &m_dma, &m_gamepad, &m_wram, &m_hram, &m_io, &m_lcd, &m_ppu, static_cast<ICPURegisters*>(&m_cpu))),
 	m_frame_ready(false),
-	m_bus_cpu(BusCpuView(&m_bus, &m_ppu))
+	m_bus_cpu(BusCpuView(&m_bus, &m_ppu, &m_dma))
 {
 	m_cpu.connect_bus(&m_bus_cpu);
+	m_cpu.connect_error_reporter(&m_errors);
+	m_cart.connect_error_reporter(&m_errors);
 	m_dma.connect(&m_bus, &m_ppu);
 	m_ppu.connect_bus(&m_bus);
 	m_ppu.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
@@ -51,7 +56,12 @@ QtreGB::~QtreGB()
 
 void QtreGB::tick()
 {
-	if(m_cpu.m_end_opcode && !m_cpu.m_is_interruption_time)
+	if(m_errors.has_error())
+	{
+		return;
+	}
+
+	if(m_cpu.is_end_opcode() && !m_cpu.is_interruption_time())
 	{
 		#if 0
 			stringstream buffer;
@@ -80,19 +90,20 @@ void QtreGB::tick()
 				char c = static_cast<char>(m_io.io_read(0xFF01));
 				serial.push_back(c);
 				m_io.io_write(0xFF02, 0);
-			}
-			if(!serial.empty())
-			{
-				cout << "Result: " << serial << endl;
+				if(getenv("SERIAL_TRACE"))
+				{
+					cout << "Result: " << serial << endl;
+				}
 			}
 		#endif
 	}
+	m_timer.begin_cpu_phase();
 	m_cpu.tick();
 
 	m_timer.timer_tick();
 	m_ppu.ppu_tick();
 
-	if(m_cpu.m_t_cycle % 4 == 0)
+	if(m_cpu.is_end_m_cycle())
 	{
 		m_dma.dma_tick();
 	}
@@ -124,9 +135,11 @@ void QtreGB::tick()
 
 }
 
-void QtreGB::load_cart(vector<u8> cart)
+bool QtreGB::load_cart(vector<u8> cart)
 {
-	m_cart.load_cart(cart);
+	m_errors.clear();
+	serial.clear();
+	return m_cart.load_cart(cart) == 0;
 }
 
 bool QtreGB::get_frame_ready()
