@@ -186,6 +186,10 @@ void Bus::write(u16 address, u8 value)
 				{
 					m_ppu->ppu_sync_lcd_power();
 				}
+				else if(address == 0xFF41)
+				{
+					m_ppu->ppu_stat_write();
+				}
 			}
 		}
 		else

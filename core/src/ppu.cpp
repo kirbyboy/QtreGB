@@ -57,7 +57,7 @@ void PPU::ppu_init()
 	m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
 
 	m_lcd_enabled = m_lcd->get_lcdc_lcd_enable();
-	m_last_lyc = m_lcd->m_lyc;
+	m_last_lyc = m_lcd->get_lyc();
 	m_lyc_update_countdown = 0;
 
 	m_oam_line_entry = vector<OAMEntry>();
@@ -172,6 +172,14 @@ void PPU::ppu_sync_lcd_power()
 	}
 }
 
+void PPU::ppu_stat_write()
+{
+	// Writing STAT can enable a source whose condition is already true (e.g. mode 1
+	// while in vblank), which raises the internal line and fires the interrupt even
+	// though no PPU mode/flag transition happened (mooneye stat_irq_blocking round 1).
+	update_stat_irq();
+}
+
 void PPU::ppu_tick()
 {
 	ppu_sync_lcd_power();
@@ -181,9 +189,9 @@ void PPU::ppu_tick()
 		return;
 	}
 
-	if(m_lcd->m_lyc != m_last_lyc)
+	if(m_lcd->get_lyc() != m_last_lyc)
 	{
-		m_last_lyc = m_lcd->m_lyc;
+		m_last_lyc = m_lcd->get_lyc();
 		m_lyc_update_countdown = 0;	// The comparison is re-evaluated instantly against the new LYC: cancel any pending delayed update
 		check_lyc();	// The game wrote LYC: LY==LYC must be re-evaluated (it is compared constantly while the PPU is on)
 	}
@@ -239,7 +247,7 @@ void PPU::ppu_power_off()
 	// LY is forced to 0 and STAT mode to 0 (HBlank). The LYC==LY flag is NOT updated:
 	// with the PPU off the comparison clock is halted and the flag keeps its last value
 	// (mooneye stat_lyc_onoff). No interrupts are generated.
-	m_lcd->m_ly = 0;
+	m_lcd->set_ly(0);
 	m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 	m_lcd_on_line = 255;
 	m_lyc_update_countdown = 0;	// A pending delayed update must not fire while the comparison clock is halted
@@ -257,7 +265,7 @@ void PPU::ppu_power_on()
 	// a late OAM scan (+4 dots) before returning to the normal schedule on line 3. The
 	// LYC==LY comparison restarts with LY=0 and its interrupt only fires on a 0->1 edge
 	// (mooneye stat_lyc_onoff).
-	m_lcd->m_ly = 0;
+	m_lcd->set_ly(0);
 	m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 	m_lcd_on_line = 0;
 	m_lyc_update_countdown = 0;	// The comparison restarts: apply the instant re-evaluation below instead of any stale pending update
@@ -284,8 +292,7 @@ void PPU::ppu_mode_oam()
 	if(m_line_ticks == 80)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
-		m_stat_irq_line = false;	// Clear STAT IRQ line on entering mode 3
-
+		update_stat_irq();	// Mode 3: the mode-based condition drops, LYC keeps the line if held
 		m_fetcher.set_state(FetchEntry::FS_TILE);
 		m_pushed_x = 0;
 		m_line_x = 0;
@@ -301,11 +308,13 @@ void PPU::ppu_mode_xfer()
 	pipeline_process();
 
 	// STAT mode=0 interrupt happens one M-cycle (4 T-cycles) before the actual
-	// mode switch (mooneye ppu.rs: cycles == 1 in AccessVram).
+	// mode switch (mooneye ppu.rs: cycles == 1 in AccessVram). The internal line is
+	// raised here and stays high until the next mode 3 drops it again.
 	if(m_pushed_x == PPU::XRES - 3)
 	{
-		if(m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK))
+		if(m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && !m_stat_irq_line)
 		{
+			m_stat_irq_line = true;
 			request_interrupt(InterruptType::IT_LCD_STAT);
 		}
 	}
@@ -324,14 +333,21 @@ void PPU::ppu_mode_hblank()
 	{
 		increment_ly();
 
-		if(m_lcd->m_ly == PPU::YRES) // If reached to the number of lines the lcd has, we go to vblank
+		if(m_lcd->get_ly() == PPU::YRES) // If reached to the number of lines the lcd has, we go to vblank
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_VBLANK);
 			m_oam_read_locked = false;
 			request_interrupt(InterruptType::IT_VBLANK);
-			update_stat_irq();
-			// The mode 2 (OAM) interrupt is also triggered when vblank starts (mooneye vblank_stat_intr-GS)
-			update_stat_irq();
+			// DMG quirk (mooneye vblank_stat_intr-GS): the mode 2 (OAM) STAT source is
+			// signalled on the very dot vblank starts, at the same time as the vblank
+			// interrupt, even though the visible mode is now 1. It raises the internal
+			// line only if it was low; the line is re-evaluated for mode 1 right after.
+			if(m_lcd->get_lcds_stat_int(StatSRC::SS_OAM) && !m_stat_irq_line)
+			{
+				m_stat_irq_line = true;
+				request_interrupt(InterruptType::IT_LCD_STAT);
+			}
+			update_stat_irq();	// Re-evaluate the line against the new mode 1 (the LYC source may hold it)
 		}
 		else
 		{
@@ -361,7 +377,7 @@ void PPU::ppu_lcd_on_line()
 		if(t == 78)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
-			m_stat_irq_line = false;
+			update_stat_irq();
 			m_oam_read_locked = true;
 			m_vram_read_locked = true;
 			m_oam_write_locked = true;
@@ -406,7 +422,7 @@ void PPU::ppu_lcd_on_line()
 	else if(t == 84)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
-		m_stat_irq_line = false;
+		update_stat_irq();
 		m_oam_write_locked = true;
 		m_vram_write_locked = true;
 	}
@@ -442,11 +458,11 @@ void PPU::ppu_mode_vblank()
 	{
 		increment_ly();
 
-		if(m_lcd->m_ly == PPU::LINES_PER_FRAME)
+		if(m_lcd->get_ly() == PPU::LINES_PER_FRAME)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
 			m_oam_read_locked = true;	// Mode 2 of the new frame: OAM is locked again
-			m_lcd->m_ly = 0;
+			m_lcd->set_ly(0);
 			check_lyc();
 			if(m_frame_done)
 			{
@@ -462,9 +478,9 @@ void PPU::ppu_mode_vblank()
 
 void PPU::increment_ly()
 {
-	const u8 finished_line = m_lcd->m_ly;	// the line that has just completed (before LY is advanced)
+	const u8 finished_line = m_lcd->get_ly();	// the line that has just completed (before LY is advanced)
 
-	m_lcd->m_ly++;
+	m_lcd->set_ly(m_lcd->get_ly() + 1);
 
 	// The window keeps an internal line counter that advances only on lines where the
 	// window is actually displayed. It is used as the window's tile row, and it must
@@ -473,8 +489,8 @@ void PPU::increment_ly()
 	const bool window_shown_on_finished_line =
 		m_lcd->get_lcdc_win_enable() &&
 		finished_line < PPU::YRES &&
-		finished_line >= m_lcd->m_win_y &&
-		m_lcd->m_win_x <= 166;
+		finished_line >= m_lcd->get_win_y() &&
+		m_lcd->get_win_x() <= 166;
 
 	if(window_shown_on_finished_line)
 	{
@@ -486,7 +502,7 @@ void PPU::increment_ly()
 	// result is written 4 dots later when it sets and 2 dots later when it clears.
 	// (mooneye lcdon_timing-GS: with LYC=1, STAT shows $80 at dot 452 and $86 at dot 456.)
 	// The dots are counted by m_lyc_update_countdown, decremented in ppu_tick.
-	const bool new_value = (m_lcd->m_ly == m_lcd->m_lyc);
+	const bool new_value = (m_lcd->get_ly() == m_lcd->get_lyc());
 	if(new_value != m_lcd->get_lcds_lyc())
 	{
 		m_lyc_update_value = new_value;
@@ -496,7 +512,7 @@ void PPU::increment_ly()
 
 void PPU::check_lyc()
 {
-	set_lyc_flag(m_lcd->m_ly == m_lcd->m_lyc);
+	set_lyc_flag(m_lcd->get_ly() == m_lcd->get_lyc());
 }
 
 void PPU::set_lyc_flag(bool ly_equals_lyc)
@@ -507,7 +523,7 @@ void PPU::set_lyc_flag(bool ly_equals_lyc)
 
 void PPU::load_line_sprites()
 {
-	u8 current_y = m_lcd->m_ly;
+	u8 current_y = m_lcd->get_ly();
 	u8 sprite_height = m_lcd->get_lcdc_obj_height();
 
 	// We save a list of the maximun 10 sprites that exists in a line
@@ -584,7 +600,7 @@ void PPU::pipeline_push_pixel()
 		m_fetcher.set_warming(false);
 	}
 
-	if (m_discarded_pixels < (m_lcd->m_scroll_x % 8))
+	if (m_discarded_pixels < (m_lcd->get_scroll_x() % 8))
 	{
 		m_bgw_fifo.pop();
 		if(!m_spr_fifo.empty())
@@ -599,7 +615,7 @@ void PPU::pipeline_push_pixel()
 	// LCDC bit 0 = 0 blanks the whole BG/window layer: it outputs BGP color 0 while
 	// objects are still drawn on top (dmg-acid2 "hair" rows 8-15).
 	const u8 bgw_color_index = m_lcd->get_lcdc_bgw_enable() ? bgw_element.get_color_index() : 0;
-	pixel_data = (m_lcd->m_bg_palette >> (bgw_color_index * 2)) & 0x03;
+	pixel_data = (m_lcd->get_bg_palette() >> (bgw_color_index * 2)) & 0x03;
 
 	/*
 	if(!m_spr_fifo.empty())
@@ -610,7 +626,7 @@ void PPU::pipeline_push_pixel()
 		{
 			if(!spr_element.get_priority())
 			{
-				u8 palette = spr_element.get_palette() ? m_lcd->m_obj_palette_0 : m_lcd->m_obj_palette_1;
+				u8 palette = spr_element.get_palette() ? m_lcd->get_obj_palette_0() : m_lcd->get_obj_palette_1();
 				pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
 			}
 		}
@@ -622,33 +638,22 @@ void PPU::pipeline_push_pixel()
 	{
 		if(m_lcd->get_lcdc_obj_enable())
 		{
-			if(!m_spr_fifo.empty())
+			// Sprites are resolved from the per-line object array, which is indexed by
+			// screen X and already applies OAM priority and the sprite palette. The
+			// streaming sprite FIFO is not aligned to the screen position (it starts at
+			// the sprite's left edge, which can be off-screen), so it is not used here.
+			FIFOElement spr_element = m_fetcher.get_object_array()[m_pushed_x];
+			if(spr_element.get_color_index() != 0)
 			{
-				FIFOElement spr_element = m_spr_fifo.pop();
-				if(spr_element.get_color_index() != 0)
+				if(!spr_element.get_priority() || bgw_color_index == 0)
 				{
-					if(!spr_element.get_priority() || bgw_color_index == 0)
-					{
-						u8 palette = spr_element.get_palette() ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
-						pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
-					}
-				}
-			}
-			else
-			{
-				FIFOElement spr_element = m_fetcher.get_object_array()[m_pushed_x];
-				if(spr_element.get_color_index() != 0)
-				{
-					if(!spr_element.get_priority() || bgw_color_index == 0)
-					{
-						u8 palette = spr_element.get_palette() ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
-						pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
-					}
+					u8 palette = spr_element.get_palette() ? m_lcd->get_obj_palette_1() : m_lcd->get_obj_palette_0();
+					pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
 				}
 			}
 		}
 
-		m_video_buffer[m_pushed_x +	(m_lcd->m_ly * PPU::XRES)] = pixel_data;
+		m_video_buffer[m_pushed_x +	(m_lcd->get_ly() * PPU::XRES)] = pixel_data;
 	}
 	m_pushed_x++;
 	m_fetcher.set_current_x(m_pushed_x);
@@ -677,28 +682,20 @@ void PPU::request_interrupt(InterruptType IType)
 
 void PPU::update_stat_irq()
 {
-	bool match = false;
-	LCDMode mode = m_lcd->get_lcds_mode();
-	// Check conditions in priority order? The hardware checks all enabled conditions
-	if(m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && m_lcd->get_lcds_lyc())
+	// The internal STAT IRQ line is the OR of the enabled conditions, with the
+	// mode-based condition forced low while the PPU is in mode 3 (only mode 3 can
+	// clear the line). LYC=LY keeps the line high across mode 3, so no new 0->1
+	// edge occurs and later STAT sources stay blocked (mooneye stat_irq_blocking).
+	const LCDMode mode = m_lcd->get_lcds_mode();
+	const bool line =
+		(m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && m_lcd->get_lcds_lyc()) ||
+		(m_lcd->get_lcds_stat_int(StatSRC::SS_OAM) && mode == LCDMode::MODE_OAM) ||
+		(m_lcd->get_lcds_stat_int(StatSRC::SS_VBLANK) && mode == LCDMode::MODE_VBLANK) ||
+		(m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && mode == LCDMode::MODE_HBLANK);
+
+	if(line && !m_stat_irq_line)
 	{
-		match = true;
-	}
-	if(!match && m_lcd->get_lcds_stat_int(StatSRC::SS_OAM) && mode == LCDMode::MODE_OAM)
-	{
-		match = true;
-	}
-	if(!match && m_lcd->get_lcds_stat_int(StatSRC::SS_VBLANK) && mode == LCDMode::MODE_VBLANK)
-	{
-		match = true;
-	}
-	if(!match && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && mode == LCDMode::MODE_HBLANK)
-	{
-		match = true;
-	}
-	if(match && !m_stat_irq_line)
-	{
-		m_stat_irq_line = true;
 		request_interrupt(InterruptType::IT_LCD_STAT);
 	}
+	m_stat_irq_line = line;
 }

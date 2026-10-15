@@ -165,3 +165,92 @@ bool LCD::get_lcds_stat_int(StatSRC stat)
 {
 	return (m_lcds & static_cast<std::underlying_type<StatSRC>::type>(stat)) != 0;
 }
+
+u8 LCD::get_lcdc()
+{
+	return m_lcdc;
+}
+
+u8 LCD::get_ly()
+{
+	return m_ly;
+}
+
+u8 LCD::get_lyc()
+{
+	return m_lyc;
+}
+
+u8 LCD::get_scroll_x()
+{
+	return m_scroll_x;
+}
+
+u8 LCD::get_scroll_y()
+{
+	return m_scroll_y;
+}
+
+u8 LCD::get_win_x()
+{
+	return m_win_x;
+}
+
+u8 LCD::get_win_y()
+{
+	return m_win_y;
+}
+
+u8 LCD::get_bg_palette()
+{
+	return m_bg_palette;
+}
+
+u8 LCD::get_obj_palette_0()
+{
+	return m_obj_palette_0;
+}
+
+u8 LCD::get_obj_palette_1()
+{
+	return m_obj_palette_1;
+}
+
+void LCD::set_ly(u8 value)
+{
+	m_ly = value;
+}
+
+void LCD::State::serialize(TaggedSerializer& s)
+{
+	s.process("lcdc", lcdc);
+	s.process("lcds", lcds);
+	s.process("scroll_y", scroll_y);
+	s.process("scroll_x", scroll_x);
+	s.process("ly", ly);
+	s.process("lyc", lyc);
+	s.process("bg_palette", bg_palette);
+	s.process("obj_palette_0", obj_palette_0);
+	s.process("obj_palette_1", obj_palette_1);
+	s.process("win_y", win_y);
+	s.process("win_x", win_x);
+}
+
+// Snapshot / access backdoor for the register file. The tags are, in order, the
+// State ones, so a State snapshot works as a prefix of it: writing to State and
+// serializing it allows injecting raw values (bypassing the write() masking
+// rules) into the register file.
+void LCD::serialize(TaggedSerializer& s)
+{
+	s.process("lcdc", m_lcdc);
+	s.process("lcds", m_lcds);
+	s.process("scroll_y", m_scroll_y);
+	s.process("scroll_x", m_scroll_x);
+	s.process("ly", m_ly);
+	s.process("lyc", m_lyc);
+	s.process("bg_palette", m_bg_palette);
+	s.process("obj_palette_0", m_obj_palette_0);
+	s.process("obj_palette_1", m_obj_palette_1);
+	s.process("win_y", m_win_y);
+	s.process("win_x", m_win_x);
+}

@@ -2,6 +2,7 @@
 #define QTREGB_LCD_H
 
 #include "types.h"
+#include "tagged_serializer.h"
 
 namespace qtreGB
 {
@@ -65,6 +66,37 @@ class LCD
 		void set_lcds_lyc(bool value);
 		bool get_lcds_stat_int(StatSRC stat);	// gets the source interruption for STAT type interruption
 
+		// Raw register values: the register file owns the storage, callers read it through
+		// these accessors instead of reaching into the fields. LY is an output produced by
+		// the PPU (the register file only mirrors it), hence set_ly().
+		u8 get_lcdc();
+		u8 get_ly();
+		u8 get_lyc();
+		u8 get_scroll_x();
+		u8 get_scroll_y();
+		u8 get_win_x();
+		u8 get_win_y();
+		u8 get_bg_palette();
+		u8 get_obj_palette_0();
+		u8 get_obj_palette_1();
+		void set_ly(u8 value);
+
+		// --- Savestates / access backdoor ---
+		// Mirror of the register file. The tags are consumed in the same order as
+		// LCD::serialize, so a State snapshot works as a prefix: writing to State and
+		// serializing it injects the raw values (bypassing the write() masking rules).
+		struct State
+		{
+			u8 lcdc, lcds, scroll_y, scroll_x, ly, lyc;
+			u8 bg_palette, obj_palette_0, obj_palette_1;
+			u8 win_y, win_x;
+
+			void serialize(TaggedSerializer& s);
+		};
+
+		void serialize(TaggedSerializer& s);
+
+	private:
 		//registers
 		u8 m_lcdc;	// FF40 — LCDC: LCD control
 		u8 m_lcds = 0;	// FF41 — STAT: LCD status

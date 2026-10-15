@@ -46,6 +46,7 @@ class PPU
 		void ppu_init();
 		void ppu_tick();
 		void ppu_sync_lcd_power();	// Evaluates the LCDC bit 7 change synchronously at the FF40 write, before the CPU's end-of-opcode interrupt check (mooneye stat_lyc_onoff)
+		void ppu_stat_write();	// Re-evaluates the STAT IRQ line at the FF41 write: enabling a source whose condition already holds raises the line (mooneye stat_irq_blocking round 1)
 
 		u8 ppu_oam_read(u16 address);
 		void ppu_oam_write(u16 address, u8 value);

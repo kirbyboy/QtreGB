@@ -1,4 +1,5 @@
 #include <sstream>
+#include <cstdio>
 
 #include "fetcher.h"
 #include "QtreGB.h"
@@ -25,14 +26,14 @@ void Fetcher::reset()
 	m_bg_mode = FetchModeBG::FS_BG_BGD;
 	m_bgw_fifo.clear();
 
-	is_window = (m_lcd->m_ly >= m_lcd->m_win_y);
+	is_window = (m_lcd->get_ly() >= m_lcd->get_win_y());
 
 	if(m_debug_enabled)
 	{
-		debug_trace("reset ly=" + std::to_string(static_cast<int>(m_lcd->m_ly)) +
-			" win_y=" + std::to_string(static_cast<int>(m_lcd->m_win_y)) +
+		debug_trace("reset ly=" + std::to_string(static_cast<int>(m_lcd->get_ly())) +
+			" win_y=" + std::to_string(static_cast<int>(m_lcd->get_win_y())) +
 			" is_window=" + std::to_string(is_window) +
-			" lcdc=" + to_hex(m_lcd->m_lcdc));
+			" lcdc=" + to_hex(m_lcd->get_lcdc()));
 	}
 }
 
@@ -196,7 +197,7 @@ const std::vector<std::string>& Fetcher::debug_log() const
 
 void Fetcher::debug_trace(const std::string& entry)
 {
-	if(m_debug_enabled && m_lcd->m_ly == m_debug_line)
+	if(m_debug_enabled && m_lcd->get_ly() == m_debug_line)
 	{
 		if(m_debug_log.size() < 4096)
 		{
@@ -216,12 +217,16 @@ void Fetcher::load_oam_entries(std::vector<OAMEntry> entries)
 
 void Fetcher::fill_object_array()
 {
+	// The object array is rebuilt for every line: stale sprite pixels from the
+	// previous line must not leak into a line where the sprite is transparent.
+	m_object_array.fill(FIFOElement(0, false, true));
+
 	for(u8 i = 0; i < m_oam_line_entries.size(); i++)
 	{
 		OAMEntry entry = m_oam_line_entries.get_entry(i).m_oam_entry;
 		u8 tile = entry.m_tile;
 		u8 sprite_height = m_lcd->get_lcdc_obj_height();
-		u8 current_y = m_lcd->m_ly;
+		u8 current_y = m_lcd->get_ly();
 		u8 sprite_data_y = 0;
 		u8 data_lo = 0;
 		u8 data_hi = 0;
@@ -289,10 +294,10 @@ void Fetcher::fill_map_background()
 
 	if(m_bg_mode == FetchModeBG::FS_BG_BGD)
 	{
-		tile_map_y = (m_lcd->m_ly + m_lcd->m_scroll_y) / 8;
+		tile_map_y = (m_lcd->get_ly() + m_lcd->get_scroll_y()) / 8;
 		if(m_bg_need_recalculate)
 		{
-			m_bg_tile_to_push = ((m_lcd->m_scroll_x + m_current_x) / 8) & 0x1F;
+			m_bg_tile_to_push = ((m_lcd->get_scroll_x() + m_current_x) / 8) & 0x1F;
 			m_bg_need_recalculate = false;
 		}
 		m_bg_tile_to_push = m_bg_tile_to_push & 0x1F;
@@ -308,7 +313,7 @@ void Fetcher::fill_map_background()
 	}
 	else
 	{
-		tile_map_y = m_lcd->m_ly - m_lcd->m_win_y;
+		tile_map_y = m_lcd->get_ly() - m_lcd->get_win_y();
 		m_tile_map_bg = m_bus->read(m_lcd->get_lcdc_win_map_area() + (m_bg_tile_to_push & 0x1F) + ((m_window_line / 8) * 32));
 
 		if(m_lcd->get_lcdc_bgw_data_area() == 0x8800)
@@ -320,11 +325,11 @@ void Fetcher::fill_map_background()
 	if(m_debug_enabled)
 	{
 		debug_trace("fill_map mode=" + std::to_string(static_cast<int>(m_bg_mode)) +
-			" ly=" + std::to_string(static_cast<int>(m_lcd->m_ly)) +
-			" sys=" + std::to_string(static_cast<int>(m_lcd->m_scroll_y)) +
+			" ly=" + std::to_string(static_cast<int>(m_lcd->get_ly())) +
+			" sys=" + std::to_string(static_cast<int>(m_lcd->get_scroll_y())) +
 			" tile_map_y=" + std::to_string(static_cast<int>(tile_map_y)) +
-			" wx=" + std::to_string(static_cast<int>(m_lcd->m_win_x)) +
-			" wy=" + std::to_string(static_cast<int>(m_lcd->m_win_y)) +
+			" wx=" + std::to_string(static_cast<int>(m_lcd->get_win_x())) +
+			" wy=" + std::to_string(static_cast<int>(m_lcd->get_win_y())) +
 			" wl=" + std::to_string(static_cast<int>(m_window_line)) +
 			" tile_to_push=" + std::to_string(static_cast<int>(m_bg_tile_to_push)) +
 			" tile_map_bg=" + to_hex(m_tile_map_bg));
@@ -367,7 +372,7 @@ void Fetcher::load_data_background(u8 offset)
 
 	if(m_bg_mode == FetchModeBG::FS_BG_BGD)
 	{
-		tile_data_y = (m_lcd->m_ly + m_lcd->m_scroll_y) % 8 * 2;
+		tile_data_y = (m_lcd->get_ly() + m_lcd->get_scroll_y()) % 8 * 2;
 		data = m_bus->read(m_lcd->get_lcdc_bgw_data_area() + (m_tile_map_bg * 16) + tile_data_y + offset);
 	}
 	else
@@ -403,7 +408,7 @@ void Fetcher::load_data_sprite(u8 offset)
 		return;
 	}
 	u8 sprite_height = m_lcd->get_lcdc_obj_height();
-	u8 current_y = m_lcd->m_ly;
+	u8 current_y = m_lcd->get_ly();
 	u8 sprite_data_y = 0;
 
 	sprite_data_y = ((current_y + 16) - m_oam_line_entries.get_entry(m_current_oam_entry).m_oam_entry.m_y) * 2;
@@ -535,10 +540,10 @@ void Fetcher::check_mode()
 		// If it's BGD mode, check for window
 		if(m_bg_mode == FetchModeBG::FS_BG_BGD)
 		{
-			if(m_current_x + 7 >= m_lcd->m_win_x &&
+			if(m_current_x + 7 >= m_lcd->get_win_x() &&
 				m_lcd->get_lcdc_win_enable() &&
-				m_lcd->m_win_x <= 166 &&
-				m_lcd->m_win_y < PPU::YRES &&
+				m_lcd->get_win_x() <= 166 &&
+				m_lcd->get_win_y() < PPU::YRES &&
 				is_window
 			)
 			{
@@ -548,20 +553,23 @@ void Fetcher::check_mode()
 				m_bg_need_recalculate = true;
 				m_bg_tile_to_push = 0;
 
+				if((m_lcd->get_ly() % 8) == 4)
+					fprintf(stderr, "BGD->WIN ly=%d cx=%d wx=%d\n", m_lcd->get_ly(), m_current_x, m_lcd->get_win_x());
+
 				if(m_debug_enabled)
 				{
 					debug_trace("check_mode -> WIN cx=" + std::to_string(static_cast<int>(m_current_x)) +
-						" win_x=" + std::to_string(static_cast<int>(m_lcd->m_win_x)));
+						" win_x=" + std::to_string(static_cast<int>(m_lcd->get_win_x())));
 				}
 			}
 		}
 		// If it's WIN mode, check to return to background mode
 		else if(m_bg_mode == FetchModeBG::FS_BG_WIN)
 		{
-			if(!(m_current_x + 7 >= m_lcd->m_win_x &&
+			if(!(m_current_x + 7 >= m_lcd->get_win_x() &&
 				m_lcd->get_lcdc_win_enable() &&
-				m_lcd->m_win_x <= 166 &&
-				m_lcd->m_win_y < PPU::YRES &&
+				m_lcd->get_win_x() <= 166 &&
+				m_lcd->get_win_y() < PPU::YRES &&
 				is_window )
 			)
 			{
@@ -570,10 +578,13 @@ void Fetcher::check_mode()
 				m_state_bg = FetchEntry::FS_TILE;
 				m_bg_need_recalculate = true;
 
+				if((m_lcd->get_ly() % 8) == 4)
+					fprintf(stderr, "WIN->BGD ly=%d cx=%d wx=%d\n", m_lcd->get_ly(), m_current_x, m_lcd->get_win_x());
+
 				if(m_debug_enabled)
 				{
 					debug_trace("check_mode -> BGD cx=" + std::to_string(static_cast<int>(m_current_x)) +
-						" win_x=" + std::to_string(static_cast<int>(m_lcd->m_win_x)));
+						" win_x=" + std::to_string(static_cast<int>(m_lcd->get_win_x())));
 				}
 			}
 		}
