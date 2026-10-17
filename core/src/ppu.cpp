@@ -15,6 +15,13 @@ const int PPU::TICKS_PER_LINE = 456;
 const int PPU::YRES = 144;
 const int PPU::XRES = 160;
 
+// First dot of Mode 3 on which a pixel is emitted (pixel 0). Dot 80 is the last
+// Mode 2 tick; the fetcher needs a warm-up before the BG FIFO can yield a pixel.
+// The exact dot fixes the phase between mid-scanline register writes and the pixel
+// stream: dmg-acid2 only matches when pixel 0 lands on an odd dot, and 95 is the
+// odd value that also minimises the m3_* MidRendering diffs.
+static constexpr int k_pixel0_dot = 95;
+
 static bool compare_function(OAMEntry e1, OAMEntry e2)
 {
 	return (e1.m_x < e2.m_x);
@@ -35,7 +42,7 @@ m_lcd(lcd),
 m_vram(Memory(0x2000)),
 m_oam_ram(vector<OAMEntry>(40)),
 m_oam_line_entry(vector<OAMEntry>()),
-m_fetcher(Fetcher(m_bgw_fifo, m_spr_fifo))
+m_fetcher()
 {}
 
 void PPU::ppu_init()
@@ -49,7 +56,7 @@ void PPU::ppu_init()
 	m_vram_read_locked = false;
 	m_oam_write_locked = false;
 	m_vram_write_locked = false;
-	m_fetcher.set_state(FetchEntry::FS_TILE);
+	m_fetcher.set_state(FetchEntryObj::FS_OBJ_TILE);
 	m_pixel_fifo = vector<u8>();
 	m_video_buffer = vector<u8>(PPU::YRES * PPU::XRES);
 
@@ -62,9 +69,10 @@ void PPU::ppu_init()
 
 	m_oam_line_entry = vector<OAMEntry>();
 
-	m_bgw_fifo.clear();
-	m_spr_fifo.clear();
-	m_fetcher.set_lcd(m_lcd);
+	m_fetcher.bgw_fifo().clear();
+	m_fetcher.spr_fifo().clear();
+	m_fetcher.set_regs(m_lcd);
+	m_fetcher.set_vram(this);
 }
 
 u8 PPU::ppu_oam_read(u16 address)
@@ -147,6 +155,13 @@ void PPU::ppu_vram_write(u16 address, u8 value)
 	}
 
 	m_vram.write(address, value);
+}
+
+// IVram: VRAM view handed to the fetcher. It routes through the bus so the address
+// translation is exactly the one the fetcher used when it held an IBus* directly.
+u8 PPU::read(u16 address)
+{
+	return m_bus->read(address);
 }
 
 const std::vector<u8> &PPU::get_video_buffer() const
@@ -233,11 +248,10 @@ void PPU::ppu_reset_line_state()
 	m_pushed_x = 0;
 	m_line_x = 0;
 	m_fetched = 0;
-	m_discarded_pixels = 0;
 	m_window_line = 0;
 	m_oam_line_entry = vector<OAMEntry>();
-	m_bgw_fifo.clear();
-	m_spr_fifo.clear();
+	m_fetcher.bgw_fifo().clear();
+	m_fetcher.spr_fifo().clear();
 	m_fetcher.reset();
 	m_fetcher.set_window_line(0);
 }
@@ -293,7 +307,7 @@ void PPU::ppu_mode_oam()
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
 		update_stat_irq();	// Mode 3: the mode-based condition drops, LYC keeps the line if held
-		m_fetcher.set_state(FetchEntry::FS_TILE);
+		m_fetcher.set_state(FetchEntryObj::FS_OBJ_TILE);
 		m_pushed_x = 0;
 		m_line_x = 0;
 		m_fetched = 0;
@@ -556,8 +570,8 @@ void PPU::load_line_sprites()
 //******************//
 void PPU::pipeline_fifo_reset()
 {
-	m_bgw_fifo.clear();
-	m_spr_fifo.clear();
+	m_fetcher.bgw_fifo().clear();
+	m_fetcher.spr_fifo().clear();
 
 	m_fetcher.reset();
 	m_fetcher.set_current_x(0);
@@ -568,10 +582,7 @@ void PPU::pipeline_fifo_reset()
 void PPU::pipeline_process()
 {
 	//LOG("line ticks", "======================== " + to_string(static_cast<int>(m_line_ticks)));
-	if((m_line_ticks & 1) == 0)
-	{
-		m_fetcher.tick();
-	}
+	m_fetcher.tick();
 
 	pipeline_push_pixel();
 }
@@ -585,74 +596,33 @@ void PPU::pipeline_push_pixel()
 	{
 		// In the first tick of mode 3 we set the fetcher to fetch background pixels
 		m_fetcher.set_mode(FetchMode::FS_BGD);
-		m_fetcher.set_state(FetchEntry::FS_TILE);
-		m_discarded_pixels = 0;
+		m_fetcher.set_state(FetchEntryObj::FS_OBJ_TILE);
 		m_fetcher.fill_object_array();
 	}
 
-	if(m_line_ticks < 92 || m_bgw_fifo.empty())
+	if(m_line_ticks < k_pixel0_dot || m_fetcher.bgw_fifo().empty())
 	{
 		return;
 	}
 
-	if(m_line_ticks == 92)
+	if(m_line_ticks == k_pixel0_dot)
 	{
 		m_fetcher.set_warming(false);
+		// The window activation is evaluated here, on the first visible pixel, so a
+		// trigger that lands off-screen (WX < 7) still clears the FIFO at the right
+		// point and stalls the output while the window's first tile is fetched.
+		m_fetcher.check_mode();
 	}
 
-	if (m_discarded_pixels < (m_lcd->get_scroll_x() % 8))
+	// The fetcher owns the FIFO merge, the palette lookup and the fine-scroll
+	// discard; it returns false when no pixel is ready this tick.
+	if(!m_fetcher.pop_pixel(pixel_data))
 	{
-		m_bgw_fifo.pop();
-		if(!m_spr_fifo.empty())
-		{
-			m_spr_fifo.pop();
-		}
-		m_discarded_pixels++;
 		return;
 	}
-
-	FIFOElement bgw_element = m_bgw_fifo.pop();
-	// LCDC bit 0 = 0 blanks the whole BG/window layer: it outputs BGP color 0 while
-	// objects are still drawn on top (dmg-acid2 "hair" rows 8-15).
-	const u8 bgw_color_index = m_lcd->get_lcdc_bgw_enable() ? bgw_element.get_color_index() : 0;
-	pixel_data = (m_lcd->get_bg_palette() >> (bgw_color_index * 2)) & 0x03;
-
-	/*
-	if(!m_spr_fifo.empty())
-	{
-		FIFOElement spr_element = m_spr_fifo.pop();
-		LOG("pipeline_push_pixel color", to_hex(spr_element.get_color_index()));
-		if(spr_element.get_color_index() != 0)
-		{
-			if(!spr_element.get_priority())
-			{
-				u8 palette = spr_element.get_palette() ? m_lcd->get_obj_palette_0() : m_lcd->get_obj_palette_1();
-				pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
-			}
-		}
-	}
-	*/
-
 
 	if(m_pushed_x < PPU::XRES)
 	{
-		if(m_lcd->get_lcdc_obj_enable())
-		{
-			// Sprites are resolved from the per-line object array, which is indexed by
-			// screen X and already applies OAM priority and the sprite palette. The
-			// streaming sprite FIFO is not aligned to the screen position (it starts at
-			// the sprite's left edge, which can be off-screen), so it is not used here.
-			FIFOElement spr_element = m_fetcher.get_object_array()[m_pushed_x];
-			if(spr_element.get_color_index() != 0)
-			{
-				if(!spr_element.get_priority() || bgw_color_index == 0)
-				{
-					u8 palette = spr_element.get_palette() ? m_lcd->get_obj_palette_1() : m_lcd->get_obj_palette_0();
-					pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
-				}
-			}
-		}
-
 		m_video_buffer[m_pushed_x +	(m_lcd->get_ly() * PPU::XRES)] = pixel_data;
 	}
 	m_pushed_x++;
@@ -669,7 +639,6 @@ const std::vector<OAMEntry> &PPU::get_oam_line_entry() const
 void PPU::connect_bus(IBus *bus)
 {
 	m_bus = bus;
-	m_fetcher.set_bus(m_bus);
 }
 
 void PPU::request_interrupt(InterruptType IType)

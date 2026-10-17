@@ -14,6 +14,7 @@
 #include "ibus.h"
 #include "oam_entry.h"
 #include "fetcher.h"
+#include "ivram.h"
 
 namespace qtreGB
 {
@@ -29,7 +30,7 @@ class LCD;
  Bit2-0 Palette number  **CGB Mode Only**     (OBP0-7)
  */
 
-class PPU
+class PPU : public IVram
 {
 	public:
 		using FrameCallback = std::function<void(bool)>;
@@ -54,6 +55,9 @@ class PPU
 
 		u8 ppu_vram_read(u16 address);
 		void ppu_vram_write(u16 address, u8 value);
+
+		// IVram implementation: read-only VRAM view handed to the fetcher.
+		u8 read(u16 address) override;
 
 		const std::vector<u8>& get_video_buffer() const;
 		const std::vector<OAMEntry>& get_oam_line_entry() const;
@@ -119,7 +123,6 @@ class PPU
 
 
 		u8 m_pushed_x;	// Indicates how many pixels have been pushed to screen
-		u8 m_discarded_pixels;	// How many pixels must be discarded before starting to process
 
 
 
@@ -144,9 +147,6 @@ class PPU
 		void pixel_fifo_push(u8 value);
 		u8 pixel_fifo_pop();
 
-
-		FIFO m_bgw_fifo;	// The backgroung/window FIFO
-		FIFO m_spr_fifo;	// The sprite FIFO
 
 		InterruptCallback m_request_interrupt;
 		FrameCallback m_frame_done;

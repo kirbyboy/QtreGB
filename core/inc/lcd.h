@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "tagged_serializer.h"
+#include "ifetcher_regs.h"
 
 namespace qtreGB
 {
@@ -23,7 +24,7 @@ enum class StatSRC:u8
 	SS_LYC = (1 << 6)
 };
 
-class LCD
+class LCD : public IFetcherRegs
 {
 	public:
 		void lcd_init();
@@ -42,13 +43,13 @@ class LCD
 		6 - Window tile map area: 0 = 9800–9BFF; 1 = 9C00–9FFF
 		7 - LCD & PPU enable: 0 = Off; 1 = On
 		*/
-		bool get_lcdc_bgw_enable();
-		bool get_lcdc_obj_enable();
-		u8 get_lcdc_obj_height();
-		u16 get_lcdc_bg_map_area();
-		u16 get_lcdc_bgw_data_area();
-		bool get_lcdc_win_enable();
-		u16 get_lcdc_win_map_area();
+		bool get_lcdc_bgw_enable() const override;
+		bool get_lcdc_obj_enable() const override;
+		u8 get_lcdc_obj_height() const override;
+		u16 get_lcdc_bg_map_area() const override;
+		u16 get_lcdc_bgw_data_area() const override;
+		bool get_lcdc_win_enable() const override;
+		u16 get_lcdc_win_map_area() const override;
 		bool get_lcdc_lcd_enable();
 
 		/*
@@ -69,16 +70,16 @@ class LCD
 		// Raw register values: the register file owns the storage, callers read it through
 		// these accessors instead of reaching into the fields. LY is an output produced by
 		// the PPU (the register file only mirrors it), hence set_ly().
-		u8 get_lcdc();
-		u8 get_ly();
+		u8 get_lcdc() const override;
+		u8 get_ly() const override;
 		u8 get_lyc();
-		u8 get_scroll_x();
-		u8 get_scroll_y();
-		u8 get_win_x();
-		u8 get_win_y();
-		u8 get_bg_palette();
-		u8 get_obj_palette_0();
-		u8 get_obj_palette_1();
+		u8 get_scroll_x() const override;
+		u8 get_scroll_y() const override;
+		u8 get_win_x() const override;
+		u8 get_win_y() const override;
+		u8 get_bg_palette() const override;
+		u8 get_obj_palette_0() const override;
+		u8 get_obj_palette_1() const override;
 		void set_ly(u8 value);
 
 		// --- Savestates / access backdoor ---

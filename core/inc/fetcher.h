@@ -7,19 +7,37 @@
 
 #include "types.h"
 #include "fifo.h"
-#include "ibus.h"
-#include "lcd.h"
+#include "ifetcher_regs.h"
+#include "ivram.h"
 #include "oam_entry.h"
 
 namespace qtreGB
 {
 
+// Background/window fetch. Each VRAM access is split in two: the _T1 state
+// computes the address (and samples the registers that select it) and the _T2
+// state performs the read. A register write landing between them changes the
+// address the read uses (bitplane mixing, tile-select glitches).
 enum class FetchEntry:u8
 {
-	FS_TILE,
-	FS_DATA0,
-	FS_DATA1,
-	FS_PUSH
+	FS_TILE_T1,
+	FS_TILE_T2,
+	FS_DATA0_T1,
+	FS_DATA0_T2,
+	FS_DATA1_T1,
+	FS_DATA1_T2,
+	FS_PUSH,
+	FS_GAP
+};
+
+// Objects keep the legacy four-step machine for now; they are rewritten in a
+// later cut. They still advance on every other tick to preserve their timing.
+enum class FetchEntryObj:u8
+{
+	FS_OBJ_TILE,
+	FS_OBJ_DATA0,
+	FS_OBJ_DATA1,
+	FS_OBJ_PUSH
 };
 
 enum class FetchMode:u8
@@ -64,18 +82,28 @@ class Fetcher
 {
 	public:
 
-		Fetcher(FIFO & bgw_fifo, FIFO & spr_fifo);
+		Fetcher();
 
 		void reset();
-		void set_state(FetchEntry state);
+		void set_state(FetchEntryObj state);
 		void set_mode(FetchMode mode);
 		void tick();
 		void check_obj(u8 x); // Every time we change X in lcd we must check available OBJ's
 		void set_window_line(u8 window_line);
 
-		void set_bus(IBus* bus);
-		void set_lcd(LCD* lcd);
+		void set_vram(IVram* vram);
+		void set_regs(IFetcherRegs* regs);
 		void set_current_x(u8 x);
+
+		// The fetcher owns the two pixel FIFOs; the PPU consumes them through these
+		// views while pushing pixels to the screen.
+		FIFO& bgw_fifo();
+		FIFO& spr_fifo();
+
+		// Produces one screen pixel from the two FIFOs. Owns the BG/OBJ merge, the
+		// palette lookup and the fine-scroll discard. Returns false when no pixel is
+		// ready (empty FIFO or a discarded pixel), leaving the caller to try again.
+		bool pop_pixel(u8& out_pixel);
 
 		void set_warming(bool warming);
 		void load_oam_entries(std::vector<OAMEntry> entries);
@@ -92,9 +120,14 @@ void debug_begin(u8 line);
 		std::array<FIFOElement, 160>& get_object_array();
 
 	private:
-		LCD *m_lcd;
+		// Screen height in lines. The fetcher keeps its own copy so it does not depend
+		// on PPU::YRES (used by the window activation check in check_mode).
+		static constexpr int SCREEN_HEIGHT = 144;
 
-		FetchEntry m_current_state;
+		IFetcherRegs* m_regs = nullptr;
+		IVram* m_vram = nullptr;
+
+		FetchEntryObj m_current_state;
 		FetchEntry m_state_bg;
 		FetchMode m_mode;
 		FetchModeBG m_bg_mode;
@@ -102,21 +135,41 @@ void debug_begin(u8 line);
 		u8 m_tile_map_bg;	// the tile for the background, the info comes from the OAM.
 		u8 m_tile_map_spr;	// the tile for the sprites, the info comes from the OAM.
 		u8 m_current_x;	// current x in lcd
-		FIFO & m_bgw_fifo;
-		FIFO & m_spr_fifo;
+		u8 m_discarded_pixels;	// fine-scroll pixels dropped before the visible area
+		FIFO m_bgw_fifo;
+		FIFO m_spr_fifo;
 		u8 m_data_lo_bg;
 		u8 m_data_hi_bg;
 		u8 m_data_lo_spr;
 		u8 m_data_hi_spr;
+		u16 m_bg_map_addr;	// tile-map address latched by FS_TILE_T1, read by FS_TILE_T2
+		u16 m_bg_data_addr;	// tile-data address latched by the *_T1 states, read by the *_T2 states
+		bool m_bg_signed_tiles;	// LCDC bit 4 sampled at the tile step (0x8800 tileset)
 		OAM_line_Entries m_oam_line_entries;
 		u8 m_current_oam_entry;
 		u8 m_bg_tile_to_push;
 		bool m_bg_need_recalculate;
+
+		// Window fine offset: when WX < 7 the window's left edge lands at a negative
+		// screen X, so the first (7 - WX) columns of its first tile are off-screen.
+		// Sampled on activation and consumed by the first window tile push.
+		u8 m_win_fine_offset;
 		bool is_window;
 		u8 m_window_line;
 
-		IBus* m_bus;
+		// Window reactivation state (see documentation/Game Boy/ppu-fetcher.md §6-§7).
+		// m_wx_triggered is set on the first window activation of a line and stays set;
+		// the window does not fall back to background when WX changes mid-line.
+		// m_window_is_being_fetched is set on activation and cleared once the first
+		// window tile has been pushed, gating the reactivation quirk.
+		bool m_wx_triggered;
+		bool m_window_is_being_fetched;
+		// Set by check_mode when the reactivation condition is met; consumed by
+		// pop_pixel, which then emits a raw color-0 pixel instead of popping the FIFO.
+		bool m_insert_bg_pixel;
+
 		bool m_warming;
+		u8 m_phase;	// tick divisor: the sprite machine and the object check advance on every other tick
 
 		std::array<FIFOElement, 160> m_object_array;
 
@@ -126,11 +179,13 @@ void debug_begin(u8 line);
 
 		void debug_trace(const std::string& entry);
 
-		void fill_map_background();
+		void fill_map_background_t1();
+		void fill_map_background_t2();
 		void fill_map_window();
 		void fill_map_sprite();
 
-		void load_data_background(u8 offset);
+		void load_data_background_t1(u8 offset);
+		void load_data_background_t2(u8 offset);
 		void load_data_window(u8 offset);
 		void load_data_sprite(u8 offset);
 
@@ -140,7 +195,7 @@ void debug_begin(u8 line);
 
 
 
-		void sm_bg();	// background/window state machine
+		void sm_bg(bool every_other);	// background/window state machine
 		void sm_obj();	// objects state machine
 };
 

@@ -40,17 +40,10 @@ void Z80GB::tick()
 {
 	// EI defers the IME enable to the boundary after the instruction that
 	// follows it: ei() in mooneye-gb prefetches the next opcode with IME still
-	// 0 and only then sets ime = true. Applying the deferred enable *before*
-	// execute() makes that following instruction's end-of-opcode interrupt
-	// check observe IME=1, so the interrupt is dispatched exactly like the
-	// reference. (RETI instead sets IME=1 directly in its handler, so it
-	// dispatches at its own boundary.)
-	if(m_next_m_cycle && m_end_opcode)
-	{
-		m_ime = true;
-		m_next_m_cycle = false;
-	}
-
+	// 0 and only then sets ime = true. The deferred enable is applied inside
+	// execute(), just after the interrupt check, so that the check still
+	// samples IME with the value it had during EI itself. (RETI instead sets
+	// IME=1 directly in its handler, so it dispatches at its own boundary.)
 	execute();
 
 	if(m_enabling_ime && m_end_opcode)
@@ -187,6 +180,37 @@ void Z80GB::execute()
 			m_is_interruption_time = true;
 			m_ime = false;
 			m_m_cycle = 1;
+		}
+	}
+
+	// Interrupt check at the instruction boundary. The reference samples the
+	// interrupt line during the opcode-fetch cycle that *follows* the completed
+	// instruction (mooneye-gb Cpu::prefetch_next -> read_cycle_intr), not at the
+	// end of the instruction itself. This is the same tick where the dispatch
+	// starts, so the dispatch timing is unchanged, but the sampled line now also
+	// includes the T-cycle that the previous check used to miss, i.e. the one in
+	// which the PPU/timer raised the request (di_timing-GS, halt_ime1_timing2-GS).
+	if(!m_is_interruption_time && !m_is_halted && m_end_opcode)
+	{
+		if(m_ime &&
+		   (((m_if & static_cast<u8>(InterruptType::IT_VBLANK)) && m_ie & static_cast<u8>(InterruptType::IT_VBLANK)) ||
+		    ((m_if & static_cast<u8>(InterruptType::IT_LCD_STAT)) && m_ie & static_cast<u8>(InterruptType::IT_LCD_STAT)) ||
+		    ((m_if & static_cast<u8>(InterruptType::IT_TIMER)) && m_ie & static_cast<u8>(InterruptType::IT_TIMER)) ||
+		    ((m_if & static_cast<u8>(InterruptType::IT_SERIAL)) && m_ie & static_cast<u8>(InterruptType::IT_SERIAL)) ||
+		    ((m_if & static_cast<u8>(InterruptType::IT_JOYPAD)) && m_ie & static_cast<u8>(InterruptType::IT_JOYPAD))))
+		{
+			// Only the five defined sources are checked: IF bits 5-7 read back as
+			// 1 on hardware and must not trigger a dispatch.
+			m_is_interruption_time = true;
+			m_ime = false;
+			m_m_cycle = 1;
+		}
+		else if(m_next_m_cycle)
+		{
+			// EI's deferred enable: applied only after the check above has run
+			// with IME still holding the value it had during the EI instruction.
+			m_ime = true;
+			m_next_m_cycle = false;
 		}
 	}
 
@@ -2579,23 +2603,9 @@ void Z80GB::execute()
 			m_t_cycle = 1;
 		}
 
-		// If interruptions are enabled
-		if(m_end_opcode && m_ime)
-		{
-			if(((m_if & static_cast<u8>(InterruptType::IT_VBLANK)) && m_ie & static_cast<u8>(InterruptType::IT_VBLANK)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_LCD_STAT)) && m_ie & static_cast<u8>(InterruptType::IT_LCD_STAT)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_TIMER)) && m_ie & static_cast<u8>(InterruptType::IT_TIMER)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_SERIAL)) && m_ie & static_cast<u8>(InterruptType::IT_SERIAL)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_JOYPAD)) && m_ie & static_cast<u8>(InterruptType::IT_JOYPAD))
-			)
-			{
-				m_is_halted = false;
-				//m_halt_bug = false;
-				m_is_interruption_time = true;
-				m_ime = false;
-				m_m_cycle = 1;
-			}
-		}
+		// The interrupt check is no longer done here: it runs at the top of
+		// execute(), on the opcode-fetch cycle of the next instruction, which is
+		// where the reference samples the interrupt line.
 	}
 }
 

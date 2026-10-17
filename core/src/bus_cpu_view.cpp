@@ -10,9 +10,11 @@ m_dma(dma)
 
 u8 BusCpuView::read(u16 address)
 {
-	// While an OAM DMA transfer owns the buses the CPU can only reach HRAM
-	// (plus the DMA register itself). Everything else reads as 0xFF.
-	if(m_dma->dma_transferring() && address < 0xFF80 && address != 0xFF46)
+	// During an OAM DMA transfer the DMA controller owns OAM, so CPU reads of
+	// $FE00-$FE9F return $FF. Every other area stays accessible: the CPU keeps
+	// executing (the DMA only contends for OAM), which is why the OAM DMA tests
+	// can run code out of echo WRAM / OAM while a transfer is in progress.
+	if(m_dma->dma_transferring() && address >= 0xFE00 && address < 0xFEA0)
 	{
 		return 0xFF;
 	}
@@ -24,7 +26,8 @@ u8 BusCpuView::read(u16 address)
 
 void BusCpuView::write(u16 address, u8 value)
 {
-	if(m_dma->dma_transferring() && address < 0xFF80 && address != 0xFF46)
+	// CPU writes to OAM are ignored while the DMA controller owns it.
+	if(m_dma->dma_transferring() && address >= 0xFE00 && address < 0xFEA0)
 	{
 		return;
 	}

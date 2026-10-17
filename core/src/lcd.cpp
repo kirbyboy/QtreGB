@@ -1,8 +1,19 @@
 #include "lcd.h"
 #include "QtreGB.h"
 #include <type_traits>
+#include <cstdio>
+#include <cstdlib>
 
 using namespace qtreGB;
+
+// TEMP DEBUG (remove before finishing): trace PPU register writes with LY.
+static void lcd_trace_write(u16 address, u8 value, u8 ly)
+{
+	if(std::getenv("LCD_TRACE") == nullptr) return;
+	static const char* names[] = {"LCDC","STAT","SCY","SCX","LY","LYC","","BGP","OBP0","OBP1","WY","WX"};
+	if(address > 11) return;
+	std::fprintf(stderr, "[lcd] w %s=%02X ly=%d\n", names[address], value, (int)ly);
+}
 
 void LCD::lcd_init()
 {
@@ -39,6 +50,7 @@ u8 LCD::read(u16 address)
 
 void LCD::write(u16 address, u8 value)
 {
+	lcd_trace_write(address, value, m_ly);
 	switch(address)
 	{
 		case 0: m_lcdc = value; break;
@@ -55,17 +67,17 @@ void LCD::write(u16 address, u8 value)
 	}
 }
 
-bool LCD::get_lcdc_bgw_enable()
+bool LCD::get_lcdc_bgw_enable() const
 {
 	return (m_lcdc & 0x01) != 0;
 }
 
-bool LCD::get_lcdc_obj_enable()
+bool LCD::get_lcdc_obj_enable() const
 {
 	return (m_lcdc & 0x02) != 0;
 }
 
-u8 LCD::get_lcdc_obj_height()
+u8 LCD::get_lcdc_obj_height() const
 {
 	if((m_lcdc & 0x04) == 0)
 	{
@@ -77,7 +89,7 @@ u8 LCD::get_lcdc_obj_height()
 	}
 }
 
-u16 LCD::get_lcdc_bg_map_area()
+u16 LCD::get_lcdc_bg_map_area() const
 {
 	if((m_lcdc & 0x08) == 0)
 	{
@@ -89,7 +101,7 @@ u16 LCD::get_lcdc_bg_map_area()
 	}
 }
 
-u16 LCD::get_lcdc_bgw_data_area()
+u16 LCD::get_lcdc_bgw_data_area() const
 {
 	if((m_lcdc & 0x10) == 0)
 	{
@@ -101,12 +113,12 @@ u16 LCD::get_lcdc_bgw_data_area()
 	}
 }
 
-bool LCD::get_lcdc_win_enable()
+bool LCD::get_lcdc_win_enable() const
 {
 	return (m_lcdc & 0x20) != 0;
 }
 
-u16 LCD::get_lcdc_win_map_area()
+u16 LCD::get_lcdc_win_map_area() const
 {
 	if((m_lcdc & 0x40) == 0)
 	{
@@ -166,12 +178,12 @@ bool LCD::get_lcds_stat_int(StatSRC stat)
 	return (m_lcds & static_cast<std::underlying_type<StatSRC>::type>(stat)) != 0;
 }
 
-u8 LCD::get_lcdc()
+u8 LCD::get_lcdc() const
 {
 	return m_lcdc;
 }
 
-u8 LCD::get_ly()
+u8 LCD::get_ly() const
 {
 	return m_ly;
 }
@@ -181,37 +193,37 @@ u8 LCD::get_lyc()
 	return m_lyc;
 }
 
-u8 LCD::get_scroll_x()
+u8 LCD::get_scroll_x() const
 {
 	return m_scroll_x;
 }
 
-u8 LCD::get_scroll_y()
+u8 LCD::get_scroll_y() const
 {
 	return m_scroll_y;
 }
 
-u8 LCD::get_win_x()
+u8 LCD::get_win_x() const
 {
 	return m_win_x;
 }
 
-u8 LCD::get_win_y()
+u8 LCD::get_win_y() const
 {
 	return m_win_y;
 }
 
-u8 LCD::get_bg_palette()
+u8 LCD::get_bg_palette() const
 {
 	return m_bg_palette;
 }
 
-u8 LCD::get_obj_palette_0()
+u8 LCD::get_obj_palette_0() const
 {
 	return m_obj_palette_0;
 }
 
-u8 LCD::get_obj_palette_1()
+u8 LCD::get_obj_palette_1() const
 {
 	return m_obj_palette_1;
 }
