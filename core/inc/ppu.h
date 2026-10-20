@@ -56,6 +56,15 @@ class PPU : public IVram
 		u8 ppu_vram_read(u16 address);
 		void ppu_vram_write(u16 address, u8 value);
 
+		// Raw storage views for diagnostics and test harnesses (input tracing,
+		// savestate capture). Unlike ppu_vram_read/ppu_oam_read these ignore the
+		// PPU bus locks and always return what the fetcher would see, so they must
+		// never be used to model CPU-visible reads.
+		u8 raw_vram_read(u16 address);
+		u8 raw_oam_read(u16 address);
+		void raw_vram_write(u16 address, u8 value);
+		void raw_oam_write(u16 address, u8 value);
+
 		// IVram implementation: read-only VRAM view handed to the fetcher.
 		u8 read(u16 address) override;
 
@@ -68,7 +77,7 @@ class PPU : public IVram
 		void connect_bus(IBus* bus);
 
 	private:
-		IBus *m_bus;
+		IBus *m_bus = nullptr;
 		LCD *m_lcd;
 		Memory m_vram;
 		std::vector<OAMEntry> m_oam_ram;	// OAM RAM

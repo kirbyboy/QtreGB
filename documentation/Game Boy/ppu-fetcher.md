@@ -453,8 +453,12 @@ Every conjunct is load-bearing:
 The last two conjuncts are what make the quirk recur only on certain lines. The trigger
 position is `p = WX - 7`. The fetcher reaches `GET_TILE_T1` with a full FIFO on a fixed
 8-pixel cadence, so the trigger only fires when `p` lands on that phase. With `WX = LY`,
-`p = LY - 7`, and the phase alignment recurs every 8 lines, which is why the phantom pixel
-appears only on lines where `LY ≡ 4 (mod 8)`.
+`p = LY - 7`, and the phase alignment recurs every 8 lines, so the phantom pixel appears on
+lines where `LY ≡ 4 (mod 8)`.
+
+That is only half of the rule. The phase alignment selects *which* lines are candidates;
+a second constraint — the position at which the next `WX` write lands in the pixel stream —
+caps the sequence. See [§7.4](#74-why-the-quirk-stops-mid-frame).
 
 ### 7.2 How the pixel is inserted
 
@@ -493,6 +497,38 @@ The window-disabled path lives inside the `PUSH` state and requires `!WIN_ENABLE
 rewinds the FIFO read pointer and writes a single zero item with `size = 1`. The CGB path
 is CGB-only and never runs on DMG. The reactivation path is the only one that applies to a
 DMG ROM that keeps the window enabled and rewrites `WX` mid-line.
+
+### 7.4 Why the quirk stops mid-frame
+
+The `m3_wx_4_change` / `m3_wx_5_change` ROMs write three different `WX` values on every
+line: `WX = 4`, then `WX = LY`, and finally `WX = 80` (about 96 T after the first write).
+`WX = LY` makes `p = LY - 7` grow by one each line, so the phase candidates are all lines
+with `LY ≡ 4 (mod 8)` (`12, 20, 28, …`). But the `WX = 80` write lands at a **fixed
+position in the pixel stream**, roughly `x = 92`, and once `WX` is 80 the comparison
+`WX == position_in_line + 7` can no longer match. Only candidates *before* that position
+fire, so the phantom stops after `LY = 92` (`p = 85`) and `LY = 100` (`p = 93`) is silent.
+
+This is why the quirk cannot be reproduced with a local `(x, state, fifo)` test alone: at
+the candidate pixel the fetcher state is byte-identical on a firing line (`LY = 92`) and a
+silent one (`LY = 100`). What differs is the **absolute dot** of the pixel. The position of
+the `WX = 80` write in the pixel stream is fixed by the Mode-3 start-of-line timing and by
+how long the window activation stalls the output.
+
+The window's left edge is at `x = WX - 7`. For `WX < 7` that position is **negative**: the
+window activates while it is still off-screen, and clearing the FIFO there stalls the
+first visible pixel until the window's first tile is fetched. The stall is part of the
+line's timing, so it shifts every subsequent pixel — including the `WX = 80` write. The
+implementation therefore evaluates the window activation *after* the warm-up (on the first
+visible pixel), not while the fetcher is still warming:
+
+- QtreGB's warm-up ends at `k_pixel0_dot = 95`; `PPU::pipeline_push_pixel` calls
+  `Fetcher::check_mode` right there, and `Fetcher::check_mode` refuses to activate while
+  `m_warming` is set.
+- Activating during the warm-up would clear the FIFO *before* pixel 0 and let the warm-up
+  fetch refill it, swallowing the stall and misplacing the `WX = 80` write by 8 pixels.
+
+With the stall modelled, `m3_wx_4_change`, `m3_wx_4_change_sprites` and `m3_wx_5_change`
+all reach `diff = 0`.
 
 ---
 

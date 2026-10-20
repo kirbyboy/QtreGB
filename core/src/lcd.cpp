@@ -1,19 +1,8 @@
 #include "lcd.h"
 #include "QtreGB.h"
 #include <type_traits>
-#include <cstdio>
-#include <cstdlib>
 
 using namespace qtreGB;
-
-// TEMP DEBUG (remove before finishing): trace PPU register writes with LY.
-static void lcd_trace_write(u16 address, u8 value, u8 ly)
-{
-	if(std::getenv("LCD_TRACE") == nullptr) return;
-	static const char* names[] = {"LCDC","STAT","SCY","SCX","LY","LYC","","BGP","OBP0","OBP1","WY","WX"};
-	if(address > 11) return;
-	std::fprintf(stderr, "[lcd] w %s=%02X ly=%d\n", names[address], value, (int)ly);
-}
 
 void LCD::lcd_init()
 {
@@ -50,7 +39,6 @@ u8 LCD::read(u16 address)
 
 void LCD::write(u16 address, u8 value)
 {
-	lcd_trace_write(address, value, m_ly);
 	switch(address)
 	{
 		case 0: m_lcdc = value; break;

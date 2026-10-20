@@ -22,6 +22,20 @@ const int PPU::XRES = 160;
 // odd value that also minimises the m3_* MidRendering diffs.
 static constexpr int k_pixel0_dot = 95;
 
+// On DMG the frame's first line pushes its pixels 4 T-cycles earlier than every other
+// line. The STAT mode-2 interrupt that starts the handler keeps the normal schedule
+// (mooneye intr_1_2_timing-GS pins that interval), so its palette write lands 4 pixels
+// later in the stream (mealybug m3_window_timing_wx_0, line 0 of the stair pattern).
+static constexpr int k_pixel0_dot_line0 = k_pixel0_dot - 4;
+
+// Safety cap for Mode 3: it starts at line dot 81 and the longest it can
+// legally last is 289 dots (Pan Docs), so no line can still be in Mode 3 at
+// dot 80 + 289 = 369. The normal exit is the pixel count in ppu_mode_xfer();
+// this bound only stops a fetcher that never delivers the 160 pixels. Cutting
+// Mode 3 short is not harmless: the pixels that were not pushed are left
+// unwritten and the right-hand side of the line keeps the previous frame.
+static constexpr int k_mode3_end_dot_max = 369;
+
 static bool compare_function(OAMEntry e1, OAMEntry e2)
 {
 	return (e1.m_x < e2.m_x);
@@ -147,6 +161,34 @@ u8 PPU::ppu_vram_read(u16 address)
 	return m_vram.read(address);
 }
 
+u8 PPU::raw_vram_read(u16 address)
+{
+	return m_vram.read(address);
+}
+
+u8 PPU::raw_oam_read(u16 address)
+{
+	const OAMEntry &entry = m_oam_ram[address / 4];
+
+	switch(address % 4)
+	{
+		case 0: return entry.m_y;
+		case 1: return entry.m_x;
+		case 2: return entry.m_tile;
+		default: return entry.m_flags;
+	}
+}
+
+void PPU::raw_vram_write(u16 address, u8 value)
+{
+	m_vram.write(address, value);
+}
+
+void PPU::raw_oam_write(u16 address, u8 value)
+{
+	ppu_oam_write_dma(address, value);
+}
+
 void PPU::ppu_vram_write(u16 address, u8 value)
 {
 	if(m_vram_write_locked)
@@ -157,11 +199,18 @@ void PPU::ppu_vram_write(u16 address, u8 value)
 	m_vram.write(address, value);
 }
 
-// IVram: VRAM view handed to the fetcher. It routes through the bus so the address
-// translation is exactly the one the fetcher used when it held an IBus* directly.
+// IVram: VRAM view handed to the fetcher. With a bus connected it routes through
+// the bus so the address translation is exactly the one the fetcher used when it
+// held an IBus* directly. Without one (isolated PPU harnesses) it falls back to
+// the same lock-gated VRAM read the bus would have performed for this range.
 u8 PPU::read(u16 address)
 {
-	return m_bus->read(address);
+	if(m_bus)
+	{
+		return m_bus->read(address);
+	}
+
+	return ppu_vram_read(static_cast<u16>(address - 0x8000));
 }
 
 const std::vector<u8> &PPU::get_video_buffer() const
@@ -333,7 +382,7 @@ void PPU::ppu_mode_xfer()
 		}
 	}
 
-	if(m_pushed_x > PPU::XRES || m_line_ticks >= 289 /* It should never exit from this condition...*/)
+	if(m_pushed_x > PPU::XRES || m_line_ticks >= k_mode3_end_dot_max)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 		m_oam_read_locked = false;	// Mode 0: OAM is accessible to the CPU again
@@ -600,12 +649,15 @@ void PPU::pipeline_push_pixel()
 		m_fetcher.fill_object_array();
 	}
 
-	if(m_line_ticks < k_pixel0_dot || m_fetcher.bgw_fifo().empty())
+	// First pixel of the line: line 0 of every frame starts its output 4 dots early.
+	const int pixel0_dot = (m_lcd->get_ly() == 0) ? k_pixel0_dot_line0 : k_pixel0_dot;
+
+	if(m_line_ticks < pixel0_dot || m_fetcher.bgw_fifo().empty())
 	{
 		return;
 	}
 
-	if(m_line_ticks == k_pixel0_dot)
+	if(m_line_ticks == pixel0_dot)
 	{
 		m_fetcher.set_warming(false);
 		// The window activation is evaluated here, on the first visible pixel, so a

@@ -2,9 +2,6 @@
 #include "operations.h"
 #include "error_reporter.h"
 
-#include <cstdlib>
-#include <cstdio>
-
 using namespace qtreGB;
 
 static RegType decode_reg(u8 reg)

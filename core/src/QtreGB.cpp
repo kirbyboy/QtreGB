@@ -139,7 +139,30 @@ bool QtreGB::load_cart(vector<u8> cart)
 {
 	m_errors.clear();
 	serial.clear();
-	return m_cart.load_cart(cart) == 0;
+
+	if(m_cart.load_cart(cart) != 0)
+	{
+		return false;
+	}
+
+	apply_post_boot_vram();
+	return true;
+}
+
+void QtreGB::apply_post_boot_vram()
+{
+	// The DMG boot ROM leaves the Nintendo (r) logo tile in VRAM at tile $19
+	// ($8190-$819F). Some Mealybug tests (e.g. m3_obp0_change) use that tile
+	// for sprites without writing any VRAM themselves, so reproduce it when
+	// the boot ROM is not emulated. Only this tile is written: the rest of the
+	// post-boot VRAM (logo tiles and their tile map) is not expected by the
+	// test images and would make them diverge.
+	static const u8 k_registered_tile[8] = {0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C};
+
+	for(int i = 0; i < 8; i++)
+	{
+		m_bus.write(0x8190 + i * 2, k_registered_tile[i]);
+	}
 }
 
 bool QtreGB::get_frame_ready()

@@ -52,6 +52,12 @@ class QtreGB
 
 	private:
 		void set_frame_ready(bool value);
+
+		// Reproduces the VRAM the DMG boot ROM leaves behind, for the case
+		// where the boot ROM is not emulated. Called on every successful
+		// cartridge load; must be skipped once a boot ROM can be run.
+		void apply_post_boot_vram();
+
 		BusCpuView m_bus_cpu;
 
 };

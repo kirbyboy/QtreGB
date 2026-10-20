@@ -1,6 +1,4 @@
 #include <sstream>
-#include <cstdio>
-#include <cstdlib>
 
 #include "fetcher.h"
 #include "QtreGB.h"
@@ -8,13 +6,6 @@
 #include "utils.h"
 
 using namespace qtreGB;
-
-// TEMP DEBUG (remove before finishing): per-line fetcher trace gated by env var.
-static bool fetch_trace_line(u8 ly)
-{
-	const char* env = std::getenv("FETCH_TRACE");
-	return env != nullptr && ly == static_cast<u8>(std::atoi(env));
-}
 
 Fetcher::Fetcher()
 {}
@@ -150,6 +141,21 @@ bool Fetcher::pop_pixel(u8& out_pixel)
 		return false;
 	}
 
+	if(m_win_fine_offset > 0)
+	{
+		// The window's leftmost columns can fall off the left edge (WX < 7). They are
+		// shifted out of the output one per dot before x = 0, so they cost real dots
+		// (dropping them all at once at push time would let the visible window start
+		// too early).
+		m_bgw_fifo.pop();
+		if(!m_spr_fifo.empty())
+		{
+			m_spr_fifo.pop();
+		}
+		m_win_fine_offset--;
+		return false;
+	}
+
 	FIFOElement bgw_element;
 	if(m_insert_bg_pixel)
 	{
@@ -157,11 +163,6 @@ bool Fetcher::pop_pixel(u8& out_pixel)
 		// untouched, so the rest of the line is shifted right by one pixel.
 		m_insert_bg_pixel = false;
 		bgw_element = FIFOElement(0, false, false);
-		if(fetch_trace_line(m_regs->get_ly()))
-		{
-			std::fprintf(stderr, "[fet] INSERT zero pixel cx=%d fifo=%zu wx=%d\n",
-				(int)m_current_x, m_bgw_fifo.size(), (int)m_regs->get_win_x());
-		}
 	}
 	else
 	{
@@ -180,12 +181,6 @@ bool Fetcher::pop_pixel(u8& out_pixel)
 		// Sprites are resolved from the per-line object array, which is indexed by
 		// screen X and already applies OAM priority and the sprite palette.
 		FIFOElement spr_element = m_object_array[m_current_x];
-		if(m_regs->get_ly() == 24 && m_current_x < 4)
-		{
-			std::fprintf(stderr, "QTRDBG pop ly=24 x=%d obj_en=1 spr_ci=%u bgw_ci=%u\n",
-				(int)m_current_x, (unsigned)spr_element.get_color_index(),
-				(unsigned)bgw_color_index);
-		}
 		if(spr_element.get_color_index() != 0)
 		{
 			if(!spr_element.get_priority() || bgw_color_index == 0)
@@ -258,13 +253,6 @@ void Fetcher::fill_object_array()
 	// previous line must not leak into a line where the sprite is transparent.
 	m_object_array.fill(FIFOElement(0, false, true));
 
-	if(m_regs->get_ly() == 24)
-	{
-		std::fprintf(stderr, "QTRDBG fill ly=24 n=%u obj_en=%d h=%u\n",
-			(unsigned)m_oam_line_entries.size(), (int)m_regs->get_lcdc_obj_enable(),
-			(unsigned)m_regs->get_lcdc_obj_height());
-	}
-
 	for(u8 i = 0; i < m_oam_line_entries.size(); i++)
 	{
 		OAMEntry entry = m_oam_line_entries.get_entry(i).m_oam_entry;
@@ -272,12 +260,6 @@ void Fetcher::fill_object_array()
 		u8 sprite_height = m_regs->get_lcdc_obj_height();
 		u8 current_y = m_regs->get_ly();
 		u8 sprite_data_y = 0;
-		if(current_y == 24)
-		{
-			std::fprintf(stderr, "QTRDBG   spr y=%u x=%u tile=%02x flags=%02x\n",
-				(unsigned)entry.m_y, (unsigned)entry.m_x, (unsigned)tile,
-				(unsigned)entry.m_flags);
-		}
 		u8 data_lo = 0;
 		u8 data_hi = 0;
 
@@ -295,11 +277,6 @@ void Fetcher::fill_object_array()
 
 		data_lo = m_vram->read(0x8000 + (tile * 16) + sprite_data_y + 0);
 		data_hi = m_vram->read(0x8000 + (tile * 16) + sprite_data_y + 1);
-		if(current_y == 24)
-		{
-			std::fprintf(stderr, "QTRDBG   tile=%02x sdy=%u lo=%02x hi=%02x\n",
-				(unsigned)tile, (unsigned)sprite_data_y, (unsigned)data_lo, (unsigned)data_hi);
-		}
 
 		bool palette = (entry.m_flags & (1 << 4)) != 0;
 		bool priority = (entry.m_flags & (1 << 7)) != 0;
@@ -633,14 +610,6 @@ void Fetcher::check_mode()
 		// simply shown at x = 0).
 		const u8 trigger_x = (m_regs->get_win_x() >= 7) ? (m_regs->get_win_x() - 7) : 0;
 
-		if(fetch_trace_line(m_regs->get_ly()))
-		{
-			std::fprintf(stderr, "[fet] cm cx=%d st=%d bg=%d fifo=%zu win_vis=%d trig=%d wx=%d wy=%d winspr=%d done=%d ins=%d\n",
-				(int)m_current_x, (int)m_state_bg, (int)m_bg_mode, m_bgw_fifo.size(),
-				(int)win_visible, (int)trigger_x, (int)m_regs->get_win_x(), (int)m_regs->get_win_y(),
-				(int)m_window_is_being_fetched, (int)m_wx_triggered, (int)m_insert_bg_pixel);
-		}
-
 		if(m_bg_mode == FetchModeBG::FS_BG_BGD)
 		{
 			// Activation: exact equality at the crossing pixel (not a >=, which cannot
@@ -660,6 +629,21 @@ void Fetcher::check_mode()
 				// Anchoring the window at x = WX - 7 leaves its first columns off-screen
 				// when WX < 7; they are dropped from the first tile push.
 				m_win_fine_offset = (m_regs->get_win_x() < 7) ? (7 - m_regs->get_win_x()) : 0;
+
+				// The activation is evaluated after this dot's fetcher tick, so the
+				// window's first fetch would normally start one dot late. When the
+				// window's left edge is off-screen (WX < 7) its off-screen columns are
+				// still shifted through the output from x = WX - 7 on, so the fetch of
+				// the first tile starts on the activation dot itself (the activation can
+				// only fire at x = 0 here, since trigger_x is 0). With WX == 0 and a
+				// non-zero fine scroll the hardware activates the window one T-cycle
+				// later, so it keeps the normal one-dot-late phase there.
+				if(m_win_fine_offset > 0 &&
+					!(m_regs->get_win_x() == 0 && (m_regs->get_scroll_x() % 8) != 0))
+				{
+					fill_map_background_t1();
+					m_state_bg = FetchEntry::FS_TILE_T2;
+				}
 
 				if(m_debug_enabled)
 				{
@@ -685,8 +669,7 @@ void Fetcher::check_mode()
 						" win_x=" + std::to_string(static_cast<int>(m_regs->get_win_x())));
 				}
 			}
-			else if(std::getenv("NO_REACT_INSERT") == nullptr &&
-				m_wx_triggered &&
+			else if(m_wx_triggered &&
 				!m_window_is_being_fetched &&
 				!m_insert_bg_pixel &&
 				m_current_x + 7 == m_regs->get_win_x() &&
@@ -702,13 +685,6 @@ void Fetcher::check_mode()
 				// pixel is prepended to the stream without clearing the FIFO, shifting
 				// the rest of the line by one pixel.
 				m_insert_bg_pixel = true;
-
-				if(std::getenv("REACT_TRACE") != nullptr)
-				{
-					std::fprintf(stderr, "[react] ly=%d cx=%d wx=%d st=%d fifo=%zu\n",
-						(int)m_regs->get_ly(), (int)m_current_x, (int)m_regs->get_win_x(),
-						(int)m_state_bg, m_bgw_fifo.size());
-				}
 
 				if(m_debug_enabled)
 				{
@@ -769,7 +745,10 @@ void Fetcher::sm_bg(bool every_other)
 				if(result)
 				{
 					m_current_state = FetchEntryObj::FS_OBJ_TILE;
-					m_state_bg = FetchEntry::FS_TILE_T1;
+					// The object fetch pauses the background fetch and resumes it
+					// where it stopped (ppu-fetcher.md §9). Restarting it from
+					// FS_TILE_T1 would throw away up to 6 dots of BG progress on
+					// every sprite and starve the FIFO on sprite-dense lines.
 					m_mode = FetchMode::FS_BGD;
 				}
 			}
@@ -829,18 +808,9 @@ void Fetcher::sm_bg(bool every_other)
 			if(result)
 			{
 				// The window's first tile has been pushed: subsequent nametable reads
-				// can trigger the reactivation quirk.
+				// can trigger the reactivation quirk. The off-screen window columns
+				// are not dropped here; pop_pixel consumes them one pixel per dot.
 				m_window_is_being_fetched = false;
-
-				if(m_bg_mode == FetchModeBG::FS_BG_WIN && m_win_fine_offset > 0)
-				{
-					// Drop the window columns that fall off the left edge (WX < 7).
-					for(u8 i = 0; i < m_win_fine_offset; i++)
-					{
-						m_bgw_fifo.pop();
-					}
-					m_win_fine_offset = 0;
-				}
 
 				m_state_bg = FetchEntry::FS_GAP;
 			}

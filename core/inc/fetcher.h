@@ -152,7 +152,11 @@ void debug_begin(u8 line);
 
 		// Window fine offset: when WX < 7 the window's left edge lands at a negative
 		// screen X, so the first (7 - WX) columns of its first tile are off-screen.
-		// Sampled on activation and consumed by the first window tile push.
+		// Sampled on activation and then consumed one pixel per dot by pop_pixel,
+		// because those off-screen columns still occupy output positions: dropping
+		// them instantly would start the visible stream too early. If the first
+		// window tile does not have enough pixels they keep being consumed from the
+		// following tiles.
 		u8 m_win_fine_offset;
 		bool is_window;
 		u8 m_window_line;
