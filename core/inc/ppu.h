@@ -71,8 +71,24 @@ class PPU : public IVram
 		const std::vector<u8>& get_video_buffer() const;
 		const std::vector<OAMEntry>& get_oam_line_entry() const;
 
+		// Helpers for the CPU's DMG I/O write conflict rules (SameBoy
+		// GB_CONFLICT_DMG_LCDC): OBJ_EN hacks depend on the PPU dot and on
+		// whether an object fetch is in progress; the window-disable glitch
+		// flag is set when the window is disabled mid-fetch.
+		int get_line_ticks() const { return static_cast<int>(m_line_ticks); }
+		bool is_object_fetching() const { return m_fetcher.is_object_fetching(); }
+		bool is_window_being_fetched() const { return m_fetcher.is_window_being_fetched(); }
+		void set_disable_window_pixel_insertion_glitch(bool v) { m_fetcher.set_disable_window_pixel_insertion_glitch(v); }
+
 		void debug_fetcher_begin(u8 line) { m_fetcher.debug_begin(line); }
 		const std::vector<std::string>& debug_fetcher_log() const { return m_fetcher.debug_log(); }
+
+		// Per-line state dump for the pixel bisect bench. When QTR_PPU_DUMP is set
+		// (to a LY, "all", or a comma-separated list) the PPU writes one structured
+		// line to stderr as mode 3 ends, describing the sprites the line scan picked
+		// and the object array the fetcher resolved. Disabled (a single getenv check
+		// per dumped line) in normal runs; never touches the hot pixel path.
+		void debug_dump_line_if_enabled();
 
 		void connect_bus(IBus* bus);
 

@@ -90,6 +90,9 @@ class Fetcher
 		void tick();
 		void check_obj(u8 x); // Every time we change X in lcd we must check available OBJ's
 		void set_window_line(u8 window_line);
+		void set_disable_window_pixel_insertion_glitch(bool v) { m_disable_window_pixel_insertion_glitch = v; }
+		bool is_object_fetching() const { return m_mode == FetchMode::FS_OBJ; }
+		bool is_window_being_fetched() const { return m_window_is_being_fetched; }
 
 		void set_vram(IVram* vram);
 		void set_regs(IFetcherRegs* regs);
@@ -106,6 +109,13 @@ class Fetcher
 		bool pop_pixel(u8& out_pixel);
 
 		void set_warming(bool warming);
+		// Test hook: the window-edge activation for WX <= 7 fires when the
+		// tracked warm-up position equals the window edge + 1 (see check_mode),
+		// so unit tests drive it directly instead of ticking 10+ times.
+		void set_warmup_pos(int pos)
+		{
+			m_warmup_pos = pos;
+		}
 		void load_oam_entries(std::vector<OAMEntry> entries);
 		void check_mode();
 
@@ -118,6 +128,11 @@ void debug_begin(u8 line);
 
 		void fill_object_array();
 		std::array<FIFOElement, 160>& get_object_array();
+
+		// Read-only view of the sprites selected for the current line. Used by the
+		// per-line state dump (QTR_PPU_DUMP) to report which OAM entries the line
+		// scan resolved before the object array was built.
+		OAM_line_Entries& get_oam_line_entries();
 
 	private:
 		// Screen height in lines. The fetcher keeps its own copy so it does not depend
@@ -168,12 +183,32 @@ void debug_begin(u8 line);
 		// window tile has been pushed, gating the reactivation quirk.
 		bool m_wx_triggered;
 		bool m_window_is_being_fetched;
+		// WX == 0, SCX&7 == 0 activation: hardware fits the 7 off-screen window
+		// columns into 6 pop slots (the first column never occupies a pop dot),
+		// so the first window push skips column 0 and the per-dot discard count
+		// is one less. One-shot, consumed by push_data_window().
+		bool m_win_drop_first;
 		// Set by check_mode when the reactivation condition is met; consumed by
 		// pop_pixel, which then emits a raw color-0 pixel instead of popping the FIFO.
 		bool m_insert_bg_pixel;
 
 		bool m_warming;
-		u8 m_phase;	// tick divisor: the sprite machine and the object check advance on every other tick
+	int m_warmup_pos;
+		bool m_disable_window_pixel_insertion_glitch = true;
+		// True once the push-time window anchor has run (see PPU's k_anchor_dot):
+		// the per-tick window check (mid-line WX switches) only starts after it,
+		// so the first window evaluation is the anchor's own (evaluated after
+		// that dot's fetcher tick, keeping the 1-dot-late first window fetch).
+		bool m_window_check_armed = false;
+
+		// Sprite fetch state (SameBoy's object fetch model, see
+		// documentation/Game Boy/ppu-fetcher.md §9): the fetch first lets the
+		// background fetcher catch up (m_obj_in_fixed == false) and then costs a
+		// fixed number of dots (m_obj_fixed_left) while the sprite's own data is
+		// read. The whole fetch stalls the pixel output.
+		bool m_obj_in_fixed = false;
+		u8 m_obj_fixed_left = 0;
+		unsigned long long m_obj_start_tick = 0;
 
 		std::array<FIFOElement, 160> m_object_array;
 
@@ -199,8 +234,9 @@ void debug_begin(u8 line);
 
 
 
-		void sm_bg(bool every_other);	// background/window state machine
+		void sm_bg();	// background/window state machine
 		void sm_obj();	// objects state machine
+		void advance_bg_state();	// one step of the background/window state machine
 };
 
 

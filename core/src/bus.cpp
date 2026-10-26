@@ -110,6 +110,18 @@ u8 Bus::read(u16 address)
 
 void Bus::write(u16 address, u8 value)
 {
+	if(getenv("QTR_BGP_WRITE") && address == 0xFF47)
+	{
+		fprintf(stderr, "[BGPWRITE] gtick=%llu addr=%04X val=%02X\n",
+			qtreGB::qtregb_global_tick, address, value);
+	}
+
+	if(getenv("QTR_WX_WRITE") && address == 0xFF4B)
+	{
+		fprintf(stderr, "[WXWRITE] gtick=%llu addr=%04X val=%02X\n",
+			qtreGB::qtregb_global_tick, address, value);
+	}
+
 	if(address < 0x8000)
 	{
 		m_cart->write(address, value);

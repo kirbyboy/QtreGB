@@ -47,11 +47,32 @@ void LCD::write(u16 address, u8 value)
 		case 3: m_scroll_x = value; break;
 		case 4: /*m_ly = value*/; break;	// read_only
 		case 5: m_lyc = value; break;
-		case 7: m_bg_palette = value; break;
-		case 8: m_obj_palette_0 = value; break;
+		case 7:
+			m_bg_palette = value;
+			if(getenv("QTR_W47"))
+			{
+				fprintf(stderr, "[W47] gtick=%llu ly=%u val=%02X\n",
+					qtreGB::qtregb_global_tick, m_ly, value);
+			}
+			break;
+		case 8:
+			m_obj_palette_0 = value;
+			if(getenv("QTR_W48"))
+			{
+				fprintf(stderr, "[W48] gtick=%llu ly=%u val=%02X\n",
+					qtreGB::qtregb_global_tick, m_ly, value);
+			}
+			break;
 		case 9: m_obj_palette_1 = value; break;
 		case 10: m_win_y = value; break;
-		case 11: m_win_x = value; break;
+		case 11:
+			m_win_x = value;
+			if(getenv("QTR_W4B"))
+			{
+				fprintf(stderr, "[W4B] gtick=%llu ly=%u wx=%u\n",
+					qtreGB::qtregb_global_tick, m_ly, value);
+			}
+			break;
 	}
 }
 

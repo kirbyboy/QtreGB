@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdlib>
 
 #include "ppu.h"
 #include "QtreGB.h"
@@ -15,12 +16,42 @@ const int PPU::TICKS_PER_LINE = 456;
 const int PPU::YRES = 144;
 const int PPU::XRES = 160;
 
+// Post-boot CPU<->PPU phase, in T-cycles. The DMG boot ROM is what fixes the
+// CPU-PPU relative phase on hardware; we do not emulate it, so the phase must
+// be set explicitly. Measured against the m3_* expected frames (see handoff
+// §23/§25): only the phase mod 4 is observable through the STAT-IRQ-driven
+// handlers. Note the coupling: the DMG I/O write conflict rules (§25.1) land
+// the LCD-enable write 1 T-cycle earlier (t=3 of the write M-cycle instead of
+// its end), so the LCD power-on dot moves 1 dot earlier and this skip is 4
+// (with a plain end-of-M-cycle LCDC write it would be 3). QTR_CPU_PHASE=N
+// overrides it for calibration.
+static constexpr int k_post_boot_ppu_phase = 4;
+
+// QTR_CPU_PHASE spike state (see the skip block in ppu_tick()).
+static long g_phase_skip = -1;
+static bool g_phase_vblank_seen = false;
+
+static long phase_skip_init()
+{
+	const char* env = getenv("QTR_CPU_PHASE");
+	return (env != nullptr) ? atol(env) : k_post_boot_ppu_phase;
+}
+
 // First dot of Mode 3 on which a pixel is emitted (pixel 0). Dot 80 is the last
 // Mode 2 tick; the fetcher needs a warm-up before the BG FIFO can yield a pixel.
 // The exact dot fixes the phase between mid-scanline register writes and the pixel
 // stream: dmg-acid2 only matches when pixel 0 lands on an odd dot, and 95 is the
 // odd value that also minimises the m3_* MidRendering diffs.
-static constexpr int k_pixel0_dot = 95;
+static constexpr int k_pixel0_dot = 97;	// SameBoy: pixel 0 at cyc=97
+
+// Dot at which the fetcher's warm-up ends and the window anchor is evaluated.
+// On hardware this happens during the late discard phase (dots ~93-96 of the
+// line): a WX <= 7 window trigger (trigger_x == 0) anchors here and its FIFO
+// clear stalls the output while the window's first tile is fetched, and the
+// first object fetch can start. It is a fixed distance from the mode-3 start
+// and NOT the first pushed pixel: the pops are delayed further by the
+// junk/discard lead (see k_pixel0_dot).
+static constexpr int k_anchor_dot = 95;	// Keep original (compensates for 2-cycle shift)
 
 // On DMG the frame's first line pushes its pixels 4 T-cycles earlier than every other
 // line. The STAT mode-2 interrupt that starts the handler keeps the normal schedule
@@ -253,6 +284,28 @@ void PPU::ppu_tick()
 		return;
 	}
 
+	// Post-boot CPU-PPU phase (k_post_boot_ppu_phase, overridable via
+	// QTR_CPU_PHASE): skip N dots during the first vblank after the last LCD
+	// power-on, so the PPU timeline runs N T-cycles behind the CPU for the
+	// rest of the run. (Skipping earlier does not persist: the post-power-on
+	// line-0..2 schedule re-anchors the phase.)
+	if(g_phase_skip < 0)
+	{
+		g_phase_skip = phase_skip_init();
+	}
+	if(!g_phase_vblank_seen)
+	{
+		if(m_lcd->get_ly() == 144)
+		{
+			g_phase_vblank_seen = true;
+		}
+	}
+	else if(g_phase_skip > 0)
+	{
+		--g_phase_skip;
+		return;
+	}
+
 	if(m_lcd->get_lyc() != m_last_lyc)
 	{
 		m_last_lyc = m_lcd->get_lyc();
@@ -261,6 +314,30 @@ void PPU::ppu_tick()
 	}
 
 	m_line_ticks++;
+
+	if(getenv("QTR_OBP_LT"))
+	{
+		static u8 last_obp = 0xFF;
+		u8 obp = m_lcd->get_obj_palette_0();
+		if(obp != last_obp)
+		{
+			last_obp = obp;
+			fprintf(stderr, "[OBPLT] ly=%u line_ticks=%u obp=%02X mode=%d\n",
+			        m_lcd->get_ly(), m_line_ticks, obp, static_cast<int>(m_lcd->get_lcds_mode()));
+		}
+	}
+
+	if(getenv("QTR_BGP_LT"))
+	{
+		static u8 last_bgp = 0xFF;
+		u8 bgp = m_lcd->get_bg_palette();
+		if(bgp != last_bgp)
+		{
+			last_bgp = bgp;
+			fprintf(stderr, "[BGPLT] ly=%u line_ticks=%u bgp=%02X mode=%d\n",
+			        m_lcd->get_ly(), m_line_ticks, bgp, static_cast<int>(m_lcd->get_lcds_mode()));
+		}
+	}
 
 	if(m_lyc_update_countdown > 0 && --m_lyc_update_countdown == 0)
 	{
@@ -323,6 +400,13 @@ void PPU::ppu_power_off()
 
 void PPU::ppu_power_on()
 {
+	// Post-boot CPU-PPU phase (see k_post_boot_ppu_phase): an LCD power-on
+	// re-anchors the phase (the line-0..2 schedule below), so any phase skip
+	// consumed before it is lost. Re-arm BOTH the skip count and the vblank
+	// flag so the shift lands after the LAST power-on.
+	g_phase_skip = -1;
+	g_phase_vblank_seen = false;
+
 	// The first line (line 0) starts in mode 0 instead of mode 2 and goes straight to mode 3,
 	// with the PPU running late by 2 T-cycles (mooneye lcdon_timing-GS). Lines 1 and 2 keep
 	// a late OAM scan (+4 dots) before returning to the normal schedule on line 3. The
@@ -357,6 +441,7 @@ void PPU::ppu_mode_oam()
 		m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
 		update_stat_irq();	// Mode 3: the mode-based condition drops, LYC keeps the line if held
 		m_fetcher.set_state(FetchEntryObj::FS_OBJ_TILE);
+		m_fetcher.set_disable_window_pixel_insertion_glitch(false);
 		m_pushed_x = 0;
 		m_line_x = 0;
 		m_fetched = 0;
@@ -384,9 +469,79 @@ void PPU::ppu_mode_xfer()
 
 	if(m_pushed_x > PPU::XRES || m_line_ticks >= k_mode3_end_dot_max)
 	{
+		debug_dump_line_if_enabled();	// Mode 3 ends: the object array for this line is complete
 		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 		m_oam_read_locked = false;	// Mode 0: OAM is accessible to the CPU again
 		update_stat_irq();
+	}
+}
+
+// Pixel bisect bench: dumps the fetcher state for the requested lines.
+// QTR_PPU_DUMP selects which lines are reported ("all", a single LY, or a
+// comma-separated list). Output goes to stderr and is meant to be post-processed,
+// never read by the emulator itself.
+void PPU::debug_dump_line_if_enabled()
+{
+	static const char *sel = getenv("QTR_PPU_DUMP");
+	if(sel == nullptr)
+	{
+		return;
+	}
+
+	const int ly = static_cast<int>(m_lcd->get_ly());
+	if(std::string(sel) != "all")
+	{
+		bool wanted = false;
+		std::string list(sel);
+		size_t start = 0;
+		while(start <= list.size())
+		{
+			const size_t comma = list.find(',', start);
+			const std::string token = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+			if(!token.empty() && std::stoi(token) == ly)
+			{
+				wanted = true;
+				break;
+			}
+			if(comma == std::string::npos)
+			{
+				break;
+			}
+			start = comma + 1;
+		}
+		if(!wanted)
+		{
+			return;
+		}
+	}
+
+	const u8 lcdc = m_lcd->get_lcdc();
+	fprintf(stderr,
+		"[PPUDBG] ly=%d lcdc=0x%02X objsize=%d scx=%d scy=%d pushed=%d ticks=%d\n",
+		ly, lcdc, static_cast<int>(m_lcd->get_lcdc_obj_height()),
+		static_cast<int>(m_lcd->get_scroll_x()), static_cast<int>(m_lcd->get_scroll_y()),
+		static_cast<int>(m_pushed_x), m_line_ticks);
+
+	OAM_line_Entries& entries = m_fetcher.get_oam_line_entries();
+	fprintf(stderr, "[PPUDBG]   oam_count=%d\n", static_cast<int>(entries.size()));
+	for(u8 i = 0; i < entries.size(); ++i)
+	{
+		OAM_line_Entry& e = entries.get_entry(i);
+		fprintf(stderr, "[PPUDBG]   oam[%d] y=%d x=%d tile=0x%02X flags=0x%02X marked=%d\n",
+			static_cast<int>(i), static_cast<int>(e.m_oam_entry.m_y), static_cast<int>(e.m_oam_entry.m_x),
+			static_cast<int>(e.m_oam_entry.m_tile), static_cast<int>(e.m_oam_entry.m_flags),
+			e.m_marked ? 1 : 0);
+	}
+
+	std::array<FIFOElement, 160>& objects = m_fetcher.get_object_array();
+	for(int x = 0; x < PPU::XRES; ++x)
+	{
+		const u8 ci = objects[x].get_color_index();
+		if(ci != 0)	// Only report pixels an object actually covered
+		{
+			fprintf(stderr, "[PPUDBG]   obj px x=%d color=%d pal=%d prio=%d\n",
+				x, static_cast<int>(ci), objects[x].get_palette() ? 1 : 0, objects[x].get_priority() ? 1 : 0);
+		}
 	}
 }
 
@@ -643,27 +798,42 @@ void PPU::pipeline_push_pixel()
 	// We check in which state we are
 	if(m_line_ticks == 81)
 	{
-		// In the first tick of mode 3 we set the fetcher to fetch background pixels
+		// In the first tick of mode 3 we set the fetcher to fetch background pixels.
+		// The object layer is no longer precomputed here: each sprite's row is
+		// stamped into the object array at its own fetch (see Fetcher::check_obj /
+		// push_data_sprite), and the array is cleared per line by the fetcher
+		// reset at the mode-3 start.
 		m_fetcher.set_mode(FetchMode::FS_BGD);
 		m_fetcher.set_state(FetchEntryObj::FS_OBJ_TILE);
-		m_fetcher.fill_object_array();
 	}
 
 	// First pixel of the line: line 0 of every frame starts its output 4 dots early.
-	const int pixel0_dot = (m_lcd->get_ly() == 0) ? k_pixel0_dot_line0 : k_pixel0_dot;
-
-	if(m_line_ticks < pixel0_dot || m_fetcher.bgw_fifo().empty())
+	// QTR_P0DOT is a temporary calibration probe: it overrides the base dot so the
+	// value can be swept against the m3_* expected images.
+	static const int pixel0_base = []()
 	{
-		return;
-	}
+		const char* e = getenv("QTR_P0DOT");
+		return e ? atoi(e) : k_pixel0_dot;
+	}();
+	const int pixel0_dot = (m_lcd->get_ly() == 0) ? (pixel0_base - 4) : pixel0_base;
 
-	if(m_line_ticks == pixel0_dot)
+	// The warm-up ends and the window anchors at the fixed anchor dot, which is
+	// decoupled from the first pushed pixel (the pops are delayed by the
+	// junk/discard lead on top of this).
+	const int anchor_dot = (m_lcd->get_ly() == 0) ? (k_anchor_dot - 4) : k_anchor_dot;
+
+	if(m_line_ticks == anchor_dot)
 	{
 		m_fetcher.set_warming(false);
 		// The window activation is evaluated here, on the first visible pixel, so a
 		// trigger that lands off-screen (WX < 7) still clears the FIFO at the right
 		// point and stalls the output while the window's first tile is fetched.
 		m_fetcher.check_mode();
+	}
+
+	if(m_line_ticks < pixel0_dot || m_fetcher.bgw_fifo().empty())
+	{
+		return;
 	}
 
 	// The fetcher owns the FIFO merge, the palette lookup and the fine-scroll
@@ -676,6 +846,11 @@ void PPU::pipeline_push_pixel()
 	if(m_pushed_x < PPU::XRES)
 	{
 		m_video_buffer[m_pushed_x +	(m_lcd->get_ly() * PPU::XRES)] = pixel_data;
+	}
+	if(m_pushed_x == 0 && getenv("QTR_FIRSTPOP"))
+	{
+		fprintf(stderr, "[FIRSTPOP] ly=%u tick=%u scx=%u\n",
+		        m_lcd->get_ly(), m_line_ticks, m_lcd->get_scroll_x());
 	}
 	m_pushed_x++;
 	m_fetcher.set_current_x(m_pushed_x);
@@ -716,6 +891,11 @@ void PPU::update_stat_irq()
 
 	if(line && !m_stat_irq_line)
 	{
+		if(getenv("QTR_STAT_LT"))
+		{
+			fprintf(stderr, "[STATLT] gtick=%llu ly=%u line_ticks=%u mode=%d\n",
+			        qtregb_global_tick, m_lcd->get_ly(), m_line_ticks, static_cast<int>(mode));
+		}
 		request_interrupt(InterruptType::IT_LCD_STAT);
 	}
 	m_stat_irq_line = line;

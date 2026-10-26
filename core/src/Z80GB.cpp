@@ -1,6 +1,11 @@
 #include "Z80GB.h"
 #include "operations.h"
+#include "ppu.h"
 #include "error_reporter.h"
+#include "QtreGB.h"
+
+#include <cstdlib>
+#include <cstdio>
 
 using namespace qtreGB;
 
@@ -47,6 +52,69 @@ void Z80GB::tick()
 	{
 		m_next_m_cycle = true;
 		m_enabling_ime = false;
+	}
+
+	// PPU tick (integrated into CPU tick): the PPU advances 1 T-cycle and may
+	// set an IRQ. check_interrupts() runs after, so the CPU sees the IRQ on
+	// the same T-cycle.
+	if(m_ppu_callback)
+	{
+		m_ppu_callback();
+	}
+
+	// Timer tick (integrated into CPU tick): the timer advances 1 T-cycle and
+	// may set an IRQ. check_interrupts() runs after, so the CPU sees the IRQ
+	// on the same T-cycle.
+	if(m_timer_callback)
+	{
+		m_timer_callback();
+	}
+
+	check_interrupts();
+}
+
+void Z80GB::check_interrupts()
+{
+	if(m_errors != nullptr && m_errors->has_error())
+	{
+		return;
+	}
+
+	if(m_bus == nullptr)
+	{
+		return;
+	}
+
+	if(m_is_interruption_time || m_is_halted)
+	{
+		if(getenv("QTR_EARLYRET"))
+		{
+			fprintf(stderr, "[EARLYRET] gtick=%llu mit=%d halted=%d t=%u m=%u endop=%d\n",
+			        qtregb_global_tick, m_is_interruption_time, m_is_halted, m_t_cycle, m_m_cycle, m_end_opcode);
+		}
+		return;
+	}
+
+	if(!m_end_opcode)
+	{
+		return;
+	}
+
+	if(m_ime &&
+	   (((m_if & static_cast<u8>(InterruptType::IT_VBLANK)) && m_ie & static_cast<u8>(InterruptType::IT_VBLANK)) ||
+	    ((m_if & static_cast<u8>(InterruptType::IT_LCD_STAT)) && m_ie & static_cast<u8>(InterruptType::IT_LCD_STAT)) ||
+	    ((m_if & static_cast<u8>(InterruptType::IT_TIMER)) && m_ie & static_cast<u8>(InterruptType::IT_TIMER)) ||
+	    ((m_if & static_cast<u8>(InterruptType::IT_SERIAL)) && m_ie & static_cast<u8>(InterruptType::IT_SERIAL)) ||
+	    ((m_if & static_cast<u8>(InterruptType::IT_JOYPAD)) && m_ie & static_cast<u8>(InterruptType::IT_JOYPAD))))
+	{
+		m_is_interruption_time = true;
+		m_ime = false;
+		m_m_cycle = 1;
+	}
+	else if(m_next_m_cycle)
+	{
+		m_ime = true;
+		m_next_m_cycle = false;
 	}
 }
 
@@ -180,39 +248,20 @@ void Z80GB::execute()
 		}
 	}
 
-	// Interrupt check at the instruction boundary. The reference samples the
-	// interrupt line during the opcode-fetch cycle that *follows* the completed
-	// instruction (mooneye-gb Cpu::prefetch_next -> read_cycle_intr), not at the
-	// end of the instruction itself. This is the same tick where the dispatch
-	// starts, so the dispatch timing is unchanged, but the sampled line now also
-	// includes the T-cycle that the previous check used to miss, i.e. the one in
-	// which the PPU/timer raised the request (di_timing-GS, halt_ime1_timing2-GS).
-	if(!m_is_interruption_time && !m_is_halted && m_end_opcode)
+	// EI deferred enable: applied only when the instruction is complete.
+	if(m_next_m_cycle && m_end_opcode)
 	{
-		if(m_ime &&
-		   (((m_if & static_cast<u8>(InterruptType::IT_VBLANK)) && m_ie & static_cast<u8>(InterruptType::IT_VBLANK)) ||
-		    ((m_if & static_cast<u8>(InterruptType::IT_LCD_STAT)) && m_ie & static_cast<u8>(InterruptType::IT_LCD_STAT)) ||
-		    ((m_if & static_cast<u8>(InterruptType::IT_TIMER)) && m_ie & static_cast<u8>(InterruptType::IT_TIMER)) ||
-		    ((m_if & static_cast<u8>(InterruptType::IT_SERIAL)) && m_ie & static_cast<u8>(InterruptType::IT_SERIAL)) ||
-		    ((m_if & static_cast<u8>(InterruptType::IT_JOYPAD)) && m_ie & static_cast<u8>(InterruptType::IT_JOYPAD))))
-		{
-			// Only the five defined sources are checked: IF bits 5-7 read back as
-			// 1 on hardware and must not trigger a dispatch.
-			m_is_interruption_time = true;
-			m_ime = false;
-			m_m_cycle = 1;
-		}
-		else if(m_next_m_cycle)
-		{
-			// EI's deferred enable: applied only after the check above has run
-			// with IME still holding the value it had during the EI instruction.
-			m_ime = true;
-			m_next_m_cycle = false;
-		}
+		m_ime = true;
+		m_next_m_cycle = false;
 	}
 
 	if(m_is_interruption_time)
 	{
+		if(getenv("QTR_ITFLAG"))
+		{
+			fprintf(stderr, "[ITFLAG] gtick=%llu mit=%d endop=%d t=%u m=%u\n",
+			        qtregb_global_tick, m_is_interruption_time, m_end_opcode, m_t_cycle, m_m_cycle);
+		}
 		// Interrupt dispatch: 4 M-cycles; the handler opcode fetch is the 5th
 		// M-cycle (done by the m_end_opcode path once m_is_interruption_time is
 		// cleared). The pending IF&IE is sampled before the low-byte push lands,
@@ -220,6 +269,11 @@ void Z80GB::execute()
 		// low-byte push is too late to cancel the dispatch.
 		if(m_t_cycle == 4)
 		{
+			if(getenv("QTR_CPU_IRQT"))
+			{
+				fprintf(stderr, "[CPUIRQ] gtick=%llu M%u done\n",
+				        qtregb_global_tick, m_m_cycle);
+			}
 			switch(m_m_cycle)
 			{
 				case 1:
@@ -291,6 +345,7 @@ void Z80GB::execute()
 		{
 			if(m_end_opcode)
 			{
+
 				m_opcode = m_bus->read(m_pc);
 				m_end_opcode = false;
 				m_t_cycle = 1;
@@ -303,6 +358,7 @@ void Z80GB::execute()
 		{
 			if(m_end_opcode)
 			{
+
 				m_opcode = m_bus->read(m_pc);
 				m_end_opcode = false;
 				m_t_cycle = 1;
@@ -2171,6 +2227,12 @@ void Z80GB::execute()
 
 				case 0xE0:	// LDH (a8),A
 				{
+					// DMG I/O write conflict (handoff §25): see in_ld_addr_r --
+					// the write M-cycle of LDH (a8),A is the third one.
+					if(m_m_cycle == 3)
+					{
+						io_conflict_write(m_fetched_address, m_a, m_t_cycle);
+					}
 					if(m_t_cycle == 4)
 					{
 						switch(m_m_cycle)
@@ -2184,7 +2246,10 @@ void Z80GB::execute()
 								m_fetched_address = 0xFF00 + m_fetched_data_lo;
 								break;
 							case 3:
-								m_bus->write(m_fetched_address, m_a);
+								if(!io_has_conflict_rule(m_fetched_address))
+								{
+									m_bus->write(m_fetched_address, m_a);
+								}
 								m_end_opcode = true;
 								break;
 						}
@@ -2803,8 +2868,73 @@ void Z80GB::in_ld_r_addr(RegType destiny, u16 address)
 	m_t_cycle++;
 }
 
+// DMG I/O write conflict rules (SameBoy sm83_cpu.c cycle_write +
+// dmg_conflict_map): LCDC (FF40) and the palette registers (FF47-FF49) land
+// their write 2 T-cycles into the write M-cycle -- hardware first writes an
+// intermediate value at t=2 (palettes: old|new; LCDC: old with the new BG_EN
+// bit) and the real value at t=3, instead of at the M-cycle's end. The write
+// M-cycle's length is unchanged, so the CPU grid is untouched (handoff §25).
+bool Z80GB::io_has_conflict_rule(u16 address) const
+{
+	return (address == 0xFF40) || (address >= 0xFF47 && address <= 0xFF49);
+}
+
+void Z80GB::io_conflict_write(u16 address, u8 value, u8 t_cycle)
+{
+	if(!io_has_conflict_rule(address))
+	{
+		return;
+	}
+	if(t_cycle == 2)
+	{
+		const u8 old_value = m_bus->read(address);
+		if(address == 0xFF40)
+		{
+			// LCDC: OBJ_EN hacks (SameBoy GB_CONFLICT_DMG_LCDC): when the new
+			// value disables OBJ, the intermediate old value loses OBJ_EN if we
+			// are on the first dot of the line or in the middle of an object
+			// fetch, because the FIFO/object state machine reads LCDC.1.
+			u8 working_old = old_value;
+			if(!(value & 0x02) && m_ppu != nullptr)
+			{
+				if(m_ppu->get_line_ticks() == 0 || m_ppu->is_object_fetching())
+				{
+					working_old &= ~0x02;
+				}
+			}
+			// Window-disable insertion glitch flag (SameBoy): when the window
+			// is disabled mid-fetch, the fetcher inserts a glitch zero.
+			if(m_ppu != nullptr &&
+			   (working_old & 0x20) && !(value & 0x20) &&
+			   m_ppu->is_window_being_fetched())
+			{
+				m_ppu->set_disable_window_pixel_insertion_glitch(true);
+			}
+			// Only the new BG/Window enable bit (bit 0) is applied early.
+			m_bus->write(address, static_cast<u8>((working_old & 0xFE) | (value & 0x01)));
+		}
+		else
+		{
+			// Palettes: old | new.
+			m_bus->write(address, static_cast<u8>(value | old_value));
+		}
+	}
+	else if(t_cycle == 3)
+	{
+		m_bus->write(address, value);
+	}
+}
+
 void Z80GB::in_ld_addr_r(u16 address, RegType origin)
 {
+	// DMG I/O write conflict (handoff §25): LCDC and BGP/OBP0/OBP1 land their
+	// write 2 T into the write M-cycle (intermediate at t=2, real value at
+	// t=3); the plain end-of-M-cycle write below is skipped for them.
+	if(m_m_cycle == 2)
+	{
+		io_conflict_write(address, m_fetched_data_lo, m_t_cycle);
+	}
+
 	if(m_t_cycle == 4)
 	{
 		switch(m_m_cycle)
@@ -2814,7 +2944,10 @@ void Z80GB::in_ld_addr_r(u16 address, RegType origin)
 				m_fetched_data_lo = read_register(origin);
 				break;
 			case 2:
-				m_bus->write(address, m_fetched_data_lo);
+				if(!io_has_conflict_rule(address))
+				{
+					m_bus->write(address, m_fetched_data_lo);
+				}
 				m_end_opcode = true;
 				break;
 		}

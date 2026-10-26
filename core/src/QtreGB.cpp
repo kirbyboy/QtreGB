@@ -10,6 +10,9 @@
 #include "QtreGB.h"
 
 using namespace qtreGB;
+
+// Monotonic CPU tick counter shared with the debug traces (QTR_* env hooks).
+namespace qtreGB { unsigned long long qtregb_global_tick = 0; }
 using namespace std;
 
 #if 1
@@ -36,6 +39,9 @@ QtreGB::QtreGB() :
 {
 	m_cpu.connect_bus(&m_bus_cpu);
 	m_cpu.connect_error_reporter(&m_errors);
+	m_cpu.set_ppu_callback([this]() { m_ppu.ppu_tick(); });
+	m_cpu.set_ppu(&m_ppu);
+	m_cpu.set_timer_callback([this]() { m_timer.timer_tick(); });
 	m_cart.connect_error_reporter(&m_errors);
 	m_dma.connect(&m_bus, &m_ppu);
 	m_ppu.connect_bus(&m_bus);
@@ -98,10 +104,9 @@ void QtreGB::tick()
 		#endif
 	}
 	m_timer.begin_cpu_phase();
-	m_cpu.tick();
+	m_cpu.tick();	// CPU tick + PPU tick + timer tick (integrated) + interrupt check
 
-	m_timer.timer_tick();
-	m_ppu.ppu_tick();
+	qtregb_global_tick++;
 
 	if(m_cpu.is_end_m_cycle())
 	{

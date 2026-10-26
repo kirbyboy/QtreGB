@@ -73,6 +73,17 @@ void FIFO::clear()
 	m_tail = 0;
 }
 
+void FIFO::insert_glitch_zero()
+{
+	// Window-disabled insertion glitch (ppu-fetcher.md §8.2):
+	// rewind the read pointer by one, overwrite that slot with a zero item,
+	// and leave the FIFO with size = 1.
+	m_head = (m_head + 7) & 0x7;
+	m_elements[m_head] = FIFOElement(0, false, false);
+	m_size = 1;
+	m_tail = (m_head + 1) & 0x7;
+}
+
 u8 FIFO::size() const
 {
 	return m_size;

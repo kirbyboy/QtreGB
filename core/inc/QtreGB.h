@@ -21,6 +21,9 @@
 namespace qtreGB
 {
 
+// Monotonic CPU tick counter shared with the QTR_* debug traces.
+extern unsigned long long qtregb_global_tick;
+
 class QtreGB
 {
 	public:

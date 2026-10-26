@@ -32,6 +32,7 @@ class FIFO
 		FIFOElement pop();
 		void push(FIFOElement element);
 		void clear();
+		void insert_glitch_zero();
 		u8 size() const;
 		bool empty() const;
 		bool full() const;
