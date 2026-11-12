@@ -46,7 +46,7 @@ QtreGB::QtreGB() :
 	m_timer.timer_init();
 	m_ppu.ppu_init();
 	m_timer.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
-
+	m_clock.reset();
 }
 
 QtreGB::~QtreGB()
@@ -55,6 +55,35 @@ QtreGB::~QtreGB()
 }
 
 void QtreGB::tick()
+{
+    switch(m_clock.get())
+    {
+        case Phase::T0: tick_t0(); break;
+        case Phase::T1: tick_t1(); break;
+        case Phase::T2: tick_t2(); break;
+        case Phase::T3: tick_t3(); break;
+        default: break;
+    }
+
+    m_clock.advance();
+}
+
+void QtreGB::cycle()
+{
+    // Un M-cycle = cuatro T-cycles. tick() sigue siendo un T-cycle para no
+    // romper la GUI, el runner ni los tests.
+    tick();
+    tick();
+    tick();
+    tick();
+}
+
+void QtreGB::tick_t0() { tick_once(); }
+void QtreGB::tick_t1() { tick_once(); }
+void QtreGB::tick_t2() { tick_once(); }
+void QtreGB::tick_t3() { tick_once(); }
+
+void QtreGB::tick_once()
 {
 	if(m_errors.has_error())
 	{

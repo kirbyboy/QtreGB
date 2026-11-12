@@ -17,6 +17,7 @@
 #include "interrupt_controller.h"
 #include "bus_cpu_view.h"
 #include "error_reporter.h"
+#include "phase_clock.h"
 
 namespace qtreGB
 {
@@ -28,6 +29,10 @@ class QtreGB
 		~QtreGB();
 
 		void tick();
+		void cycle();
+
+		Phase get_phase() const { return m_clock.get(); }
+
 
 		bool load_cart(std::vector<u8> cart);
 
@@ -52,6 +57,14 @@ class QtreGB
 
 	private:
 		void set_frame_ready(bool value);
+
+		void tick_t0();
+		void tick_t1();
+		void tick_t2();
+		void tick_t3();
+		void tick_once();
+
+		PhaseClock m_clock;
 		BusCpuView m_bus_cpu;
 
 };
