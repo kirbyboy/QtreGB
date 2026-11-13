@@ -137,6 +137,8 @@ class PPU
 		u8 m_obj_fetch_wait = 0;	// Second dot of an OBJ access (2 dots per access)
 		u8 m_obj_post_wait = 0;	// Dot after the OBJ push where the FIFO still waits
 		u8 m_obj_penalty = 6;	// Total dots consumed by the current OBJ fetch
+		u16 m_mode0_penalty_dots = 0;	// CPU-visible mode 3 extension from OBJ penalties
+		u8 m_mode0_extra_correction = 0;	// Extra pullback for a lone X>0 OBJ
 		u8 m_obj_group_total = 0;	// Number of sprites in the current same-X OBJ group
 		u8 m_last_group_lx = 0xFF;	// LX of the current OBJ group
 		bool m_obj_multiple_groups = false;	// The line has sprites in more than one X group

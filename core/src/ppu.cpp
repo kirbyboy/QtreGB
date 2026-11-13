@@ -340,6 +340,7 @@ void PPU::ppu_mode_oam()
 		m_is_fetching_sprite = false;
 		m_pixel_transfer_phase = PixelTransferPhase::Dummy;
 		m_fetch_phase = FetchPhase::BgTilemap;
+		m_bg_fetch_wait = 2;	// First tile fetch starts two dots after the dummy startup
 		m_fetch_window = false;
 		m_bg_pixels.clear();
 		m_obj_pixels.clear();
@@ -686,22 +687,10 @@ void PPU::pixel_transfer_tick()
 		return;
 	}
 
-	if(m_obj_post_wait > 0)
-	{
-		--m_obj_post_wait;
-	}
-
-	tick_fetcher();
-
-	// The OBJ push takes one more dot before the FIFO can be popped: the
-	// object pixels must be available for the next pixel, not the current one.
-	if(m_obj_post_wait > 0)
-	{
-		return;
-	}
 
 	if(m_pixel_transfer_phase == PixelTransferPhase::Dummy)
 	{
+		tick_fetcher();
 		m_bg_pixels.clear();
 		for(int i = 0; i < 8; i++)
 		{
@@ -713,16 +702,121 @@ void PPU::pixel_transfer_tick()
 		m_obj_considered_tiles.clear();
 		m_obj_multiple_groups = false;
 		{
-			int groups = 0;
-			for(const auto& entries : m_oam_entries)
+			std::array<u8, 168> counts{};
+			int sprite_count = 0;
+			int first_y = 0;
+			int first_x = 0;
+			int last_x = 0;
+			int min_x = 168;
+			int max_x = 0;
+			const u8 ly = m_lcd->m_ly;
+			const u8 height = m_lcd->get_lcdc_obj_height();
+			for(int i = 0; i < 40 && sprite_count < 10; i++)
 			{
-				if(!entries.empty())
+				const OAMEntry& entry = m_oam_ram[i];
+				if(entry.m_y <= ly + 16 && entry.m_y + height > ly + 16 && entry.m_x < 168)
+				{
+					if(sprite_count == 0)
+					{
+						first_y = entry.m_y;
+						first_x = entry.m_x;
+					}
+					last_x = entry.m_x;
+					if(entry.m_x < min_x) min_x = entry.m_x;
+					if(entry.m_x > max_x) max_x = entry.m_x;
+					counts[entry.m_x]++;
+					++sprite_count;
+				}
+			}
+
+			int groups = 0;
+			for(u8 count : counts)
+			{
+				if(count != 0)
 				{
 					++groups;
-					if(groups > 1) break;
 				}
 			}
 			m_obj_multiple_groups = groups > 1;
+
+			std::vector<int> considered;
+			int total = 0;
+			for(u8 x = 0; x < 168; x++)
+			{
+				const int count = counts[x];
+				if(count == 0)
+				{
+					continue;
+				}
+				for(int j = 0; j < count; j++)
+				{
+					const int screen_x = static_cast<int>(x) - 8;
+					const int position = screen_x + static_cast<int>(m_lcd->m_scroll_x);
+					const int tile_key = floor_div8(position);
+					const int pixel_in_tile = floor_mod8(position);
+					bool tile_considered = false;
+					for(int key : considered)
+					{
+						if(key == tile_key)
+						{
+							tile_considered = true;
+							break;
+						}
+					}
+
+					int penalty;
+					if(x == 0 && !tile_considered)
+					{
+						penalty = 8;
+					}
+					else if(tile_considered)
+					{
+						penalty = 6;
+					}
+					else
+					{
+						int extra = 5 - pixel_in_tile;
+						if(extra < 0)
+						{
+							extra = 0;
+						}
+						penalty = 6 + extra;
+						if(count > 1)
+						{
+							if(pixel_in_tile >= 4)
+							{
+								penalty = 6;
+							}
+							else if(pixel_in_tile >= 2)
+							{
+								penalty = m_obj_multiple_groups ? 7 : 6;
+							}
+							else if(pixel_in_tile == 0)
+							{
+								penalty = 10;
+							}
+						}
+					}
+
+					total += penalty;
+					if(!tile_considered)
+					{
+						considered.push_back(tile_key);
+					}
+				}
+			}
+			m_mode0_penalty_dots = static_cast<u16>(total);
+			m_mode0_extra_correction = 0;
+			if(sprite_count == 1 && first_x > 0)
+			{
+				const u8 pixel_in_tile = static_cast<u8>(first_x & 7);
+				m_mode0_extra_correction = (pixel_in_tile >= 1 && pixel_in_tile <= 3) ? 1 : 2;
+			}
+			else if(sprite_count >= 2 &&
+				(max_x - min_x) == 8 * (sprite_count - 1) && min_x >= 2)
+			{
+				m_mode0_extra_correction = 1;
+			}
 		}
 		m_last_group_lx = 0xFF;
 		m_obj_group_total = 0;
@@ -732,6 +826,7 @@ void PPU::pixel_transfer_tick()
 		m_bg_prev_scx_low = static_cast<u8>(m_lcd->m_scroll_x % 8);
 		m_bg_line_scx_low = m_bg_prev_scx_low;
 		m_fetch_phase = FetchPhase::BgTilemap;
+		m_bg_fetch_wait = 2;
 		m_fetch_window = false;
 		m_window_active = false;
 		m_window_activating = false;
@@ -742,14 +837,9 @@ void PPU::pixel_transfer_tick()
 		return;
 	}
 
-	// Window activation: throw away the BG FIFO and restart the fetcher with
-	// the window tilemap at the current LX. On DMG WX/LCDC.WIN are seen with
-	// a 1 T-cycle delay; the +1 case is the documented late-activation glitch.
 	const bool win_enable_now = m_lcd->get_lcdc_win_enable();
 	const bool win_enable_last = (m_last_lcdc & 0x20) != 0;
 
-	// Disabling WIN during mode 3 aborts the window fetch and returns to the
-	// background at the next tile fetch. The already-fetched pixels drain.
 	if((m_window_active || m_window_activating) && !win_enable_last)
 	{
 		m_window_active = false;
@@ -767,13 +857,9 @@ void PPU::pixel_transfer_tick()
 			return;
 		}
 
-		// Activate one dot after the trigger: throw away the BG FIFO and
-		// restart the fetcher with the window tilemap.
 		m_window_active = true;
 		m_window_just_activated = true;
 		m_window_tile_x = 0;
-		// The window row advances on every activation, including multiple
-		// activations on the same line.
 		m_window_line = m_window_next_row++;
 		m_bg_pixels.clear();
 		m_fetch_phase = FetchPhase::BgTilemap;
@@ -786,147 +872,136 @@ void PPU::pixel_transfer_tick()
 	    (m_lx == m_last_wx + 2 && !win_enable_last)))
 	{
 		m_window_activating = true;
-		// WX=0 with SCX % 8 > 0 activates one dot later, during the discard.
 		m_window_activation_delay =
 			(m_pixel_transfer_phase == PixelTransferPhase::Discard && m_last_wx == 0) ? 1 : 0;
 		return;
 	}
 
-	// Mode 3 has a four-dot startup before the FIFO starts draining: the
-	// fetcher needs its first tile access before pixel 0 can be produced.
-	// Without it mode 0 starts four dots too early (169 instead of 172 dots).
-	if(m_dots < 85)
+	if(m_dots < 83)
 	{
+		tick_fetcher();
 		return;
 	}
 
-	if(m_pixel_transfer_phase == PixelTransferPhase::Discard)
+	if(m_obj_post_wait > 0)
 	{
-		if(m_is_fetching_sprite || m_obj_post_wait > 0)
-		{
-			return;
-		}
-
-		if(m_lcd->get_lcdc_obj_enable() && oam_entry_pending(m_lx))
-		{
-			start_sprite_fetch();
-			return;
-		}
-
-		if(m_bg_pixels.empty())
-		{
-			return;
-		}
-
-		m_bg_pixels.pop_front();
-		if(!m_obj_pixels.empty())
-		{
-			m_obj_pixels.pop_front();
-		}
-		if(++m_initial_scx_discarded == m_initial_scx_to_discard)
-		{
-			m_pixel_transfer_phase = PixelTransferPhase::Lx0;
-		}
-		return;
+		--m_obj_post_wait;
 	}
 
-	if(m_pixel_transfer_phase == PixelTransferPhase::Lx0)
+	const bool obj_pending =
+		m_lcd->get_lcdc_obj_enable() && m_lx < 168 && oam_entry_pending(m_lx);
+	const bool can_pop = !m_is_fetching_sprite && m_obj_post_wait == 0 &&
+		!obj_pending && !m_bg_pixels.empty();
+
+	bool inc_lx = false;
+	bool discard_done = false;
+	const u8 lx_before = m_lx;
+
+	// Expose mode 0 at the CPU-visible dot budget: base 252 plus the OBJ
+	// penalties of the line. The framebuffer keeps receiving pixels after
+	// this point; only the STAT mode switches.
+	if(m_mode0_penalty_dots == 0)
 	{
-		if(m_is_fetching_sprite || m_obj_post_wait > 0)
+		// No OBJ on this line: use the validated end-of-line phase.
+		if(m_lx == 167 && !oam_entry_pending(167) && !m_is_fetching_sprite &&
+		   m_obj_post_wait == 0 && m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
 		{
-			return;
+			m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 		}
+	}
+	else
+	{
+		const u16 mode0_dot = static_cast<u16>(252 + m_mode0_penalty_dots -
+			(m_mode0_penalty_dots != 0 ? 1 : 0) - m_mode0_extra_correction);
+		if(m_dots >= mode0_dot && !oam_entry_pending(167) && !m_is_fetching_sprite &&
+		   m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
+		{
+			m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
+		}
+	}
 
-		if(m_lcd->get_lcdc_obj_enable() && oam_entry_pending(m_lx))
+	if(can_pop)
+	{
+		if(m_pixel_transfer_phase == PixelTransferPhase::Discard)
 		{
-			start_sprite_fetch();
-			return;
+			m_bg_pixels.pop_front();
+			if(!m_obj_pixels.empty())
+			{
+				m_obj_pixels.pop_front();
+			}
+			if(++m_initial_scx_discarded == m_initial_scx_to_discard)
+			{
+				discard_done = true;
+			}
 		}
+		else if(m_pixel_transfer_phase == PixelTransferPhase::Lx0)
+		{
+			m_bg_pixels.pop_front();
+			if(!m_obj_pixels.empty())
+			{
+				m_obj_pixels.pop_front();
+			}
+			inc_lx = true;
+		}
+		else
+		{
+			const BgPixel bg = m_bg_pixels.front();
+			m_bg_pixels.pop_front();
 
-		if(m_bg_pixels.empty())
-		{
-			return;
-		}
+			// DMG: the PPU sees LCDC/BGP delayed by 1 T-cycle. LX == 8 is the
+			// documented exception for LCDC.
+			const u8 lcdc = m_lcd->m_lcdc;
+			const bool bg_enable = (lcdc & 0x01) != 0;
+			const bool obj_enable = (lcdc & 0x02) != 0;
+			const u8 bgp = m_lcd->m_bg_palette;
 
-		m_bg_pixels.pop_front();
-		if(!m_obj_pixels.empty())
-		{
-			m_obj_pixels.pop_front();
+			const u8 bg_color_index = bg_enable ? bg.color_index : 0;
+			u8 color = static_cast<u8>((bgp >> (bg_color_index * 2)) & 0x03);
+
+			if(obj_enable && !m_obj_pixels.empty())
+			{
+				const ObjPixel obj = m_obj_pixels.front();
+				m_obj_pixels.pop_front();
+
+				if(obj.color_index != 0 && (!obj.priority || bg_color_index == 0))
+				{
+					const u8 palette = obj.palette ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
+					color = static_cast<u8>((palette >> (obj.color_index * 2)) & 0x03);
+				}
+			}
+
+			if(m_lcd->m_ly < PPU::YRES && m_pushed_x < PPU::XRES)
+			{
+				m_video_buffer[m_pushed_x + m_lcd->m_ly * PPU::XRES] = color;
+			}
+
+			m_pushed_x++;
+			inc_lx = true;
 		}
-		if(++m_lx == 8)
+	}
+
+	tick_fetcher();
+
+	if(discard_done)
+	{
+		m_pixel_transfer_phase = PixelTransferPhase::Lx0;
+	}
+	if(inc_lx)
+	{
+		++m_lx;
+		if(m_lx == 8 && m_pixel_transfer_phase == PixelTransferPhase::Lx0)
 		{
 			m_pixel_transfer_phase = PixelTransferPhase::Lx8;
 		}
-		return;
-	}
-
-	// Expose mode 0 one dot before the last pixel finishes. The framebuffer
-	// still receives the final pixels, but the CPU observes the mode switch
-	// at the end-of-line timing used by the sprite timing test. OBJs at the
-	// last tile must finish their fetch and penalty first.
-	if(m_lx == 167 && !oam_entry_pending(167) && !m_is_fetching_sprite &&
-	   m_obj_post_wait == 0 && m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
-	{
-		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 	}
 
 	// The STAT mode 0 interrupt is raised one M-cycle before the actual mode
 	// switch; this is what the CPU measures in intr_2_0_timing.
-	if(m_lx == 163 && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && !m_stat_irq_line)
+	if(lx_before == 165 && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && !m_stat_irq_line)
 	{
 		m_stat_irq_line = true;
 		request_interrupt(InterruptType::IT_LCD_STAT);
 	}
-
-	// Visible pixels.
-	if(m_is_fetching_sprite || m_obj_post_wait > 0)
-	{
-		return;
-	}
-
-	if(m_lx < 168 && m_lcd->get_lcdc_obj_enable() && oam_entry_pending(m_lx))
-	{
-		start_sprite_fetch();
-		return;
-	}
-
-	if(m_bg_pixels.empty())
-	{
-		return;
-	}
-
-	const BgPixel bg = m_bg_pixels.front();
-	m_bg_pixels.pop_front();
-
-	// DMG: the PPU sees LCDC/BGP delayed by 1 T-cycle. LX == 8 is the
-	// documented exception for LCDC.
-	const u8 lcdc = m_lcd->m_lcdc;
-	const bool bg_enable = (lcdc & 0x01) != 0;
-	const bool obj_enable = (lcdc & 0x02) != 0;
-	const u8 bgp = m_lcd->m_bg_palette;
-
-	const u8 bg_color_index = bg_enable ? bg.color_index : 0;
-	u8 color = static_cast<u8>((bgp >> (bg_color_index * 2)) & 0x03);
-
-	if(obj_enable && !m_obj_pixels.empty())
-	{
-		const ObjPixel obj = m_obj_pixels.front();
-		m_obj_pixels.pop_front();
-
-		if(obj.color_index != 0 && (!obj.priority || bg_color_index == 0))
-		{
-			const u8 palette = obj.palette ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
-			color = static_cast<u8>((palette >> (obj.color_index * 2)) & 0x03);
-		}
-	}
-
-	if(m_lcd->m_ly < PPU::YRES && m_pushed_x < PPU::XRES)
-	{
-		m_video_buffer[m_pushed_x + m_lcd->m_ly * PPU::XRES] = color;
-	}
-
-	m_pushed_x++;
-	m_lx++;
 
 	if(m_lx >= 168)
 	{
@@ -1025,6 +1100,7 @@ void PPU::tick_bg_fetch()
 			? static_cast<u8>(m_window_line % 8)
 			: static_cast<u8>((m_lcd->m_ly + m_lcd->m_scroll_y) % 8);
 		m_fetch_phase = FetchPhase::BgLow;
+		m_bg_fetch_wait = 1;
 		return;
 	}
 
@@ -1037,10 +1113,7 @@ void PPU::tick_bg_fetch()
 		m_fetch_data_addr = static_cast<u16>(tile_data + m_fetch_tile_y * 2);
 		m_fetch_low = m_bus->read(m_fetch_data_addr);
 		m_fetch_phase = FetchPhase::BgHigh;
-		if(m_fetch_window && m_window_active)
-		{
-			m_bg_fetch_wait = 1;
-		}
+		m_bg_fetch_wait = 1;
 		return;
 	}
 
@@ -1059,26 +1132,30 @@ void PPU::tick_bg_fetch()
 		m_fetch_data_addr = static_cast<u16>(tile_data + tile_y * 2);
 		m_fetch_high = m_bus->read(m_fetch_data_addr + 1);
 		m_fetch_phase = FetchPhase::BgPush;
-		if(m_fetch_window && m_window_active)
-		{
-			m_bg_fetch_wait = 1;
-		}
+		m_bg_fetch_wait = 1;
 		return;
 	}
 
 	if(m_fetch_phase == FetchPhase::BgPush)
 	{
-		// The FIFO is filled with a whole tile at once, so the fetcher must
-		// wait until it is empty; meanwhile it has already fetched the next
-		// tile and is ready to push.
-		if(!m_bg_pixels.empty())
+		if(m_bg_pixels.empty())
 		{
+			// Push the cached tile and move on. Do not start an OBJ on this
+			// tick: the BG fetcher first fetches the next tile, and the OBJ
+			// is served at that next push phase.
+			push_bg_tile();
+			m_fetch_phase = FetchPhase::BgTilemap;
+			m_bg_fetch_x = static_cast<u8>(m_bg_fetch_x + 8);
 			return;
 		}
 
-		push_bg_tile();
-		m_fetch_phase = FetchPhase::BgTilemap;
-		m_bg_fetch_x = static_cast<u8>(m_bg_fetch_x + 8);
+		// FIFO not empty: if an OBJ is pending, cache the BG tile and start
+		// the object fetch. The cached tile is pushed after the group.
+		if(m_lcd->get_lcdc_obj_enable() && m_lx < 168 && oam_entry_pending(m_lx))
+		{
+			start_sprite_fetch();
+			return;
+		}
 	}
 }
 
@@ -1234,13 +1311,11 @@ void PPU::tick_obj_fetch()
 		push_obj_pixels();
 		m_is_fetching_sprite = false;
 		m_obj_fetch_phase = FetchPhase::ObjLow;
-		// The three fetch accesses take 6 dots; the remaining penalty is the
-		// wait for the background fetch (6..11 dots total per OBJ).
-		// A lone sprite at X>0 starts after the first BG pixel; the background
-		// pipe needs three more dots to align the next tile fetch with the
-		// point where SCX is sampled.
-		const u8 x_extra = (m_obj_group_total == 1 && m_sprite_entry.entry.m_x != 0) ? 3 : 0;
-		m_obj_post_wait = static_cast<u8>(m_obj_penalty - 5 + x_extra);
+		// A lone sprite at X>0 needs six more dots to align the next BG
+		// tile fetch with the point where SCX is sampled. The CPU-visible
+		// mode 0 is handled by the per-line dot budget, so this visual phase
+		// shift does not affect the sprite timing test.
+		m_obj_post_wait = (m_obj_group_total == 1 && m_sprite_entry.entry.m_x != 0) ? 6 : 0;
 	}
 }
 
