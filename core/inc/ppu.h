@@ -75,6 +75,7 @@ class PPU
 		struct BgPixel
 		{
 			u8 color_index = 0;
+			bool window = false;
 		};
 
 		struct ObjPixel
@@ -113,7 +114,26 @@ class PPU
 
 		std::array<std::vector<OamLineEntry>, 168> m_oam_entries;
 		std::array<u8, 168> m_oam_served_count{};	// OBJ entries already served at each LX
+		struct PendingPalettePixel
+		{
+			u16 dot;
+			u8 x;
+			u8 y;
+			u8 color_index;
+			u8 palette_sel;	// 0 = BGP, 1 = OBP0, 2 = OBP1
+			bool window;
+			u8 out_delay;	// Cumulative x_extra output delay before this pixel
+		};
+
 		std::deque<BgPixel> m_bg_pixels;
+		std::deque<PendingPalettePixel> m_pending_palette_pixels;
+		u8 m_bg_palette_delay = 0;
+		u8 m_line_obj_out_delay = 0;
+		u8 m_win_palette_delay = 0;
+		bool m_wx0_write_pending = false;	// WX changed to 0 this line
+		bool m_wx0_line0_window = false;	// WX=0 window activated at lx=11
+		u8 m_obj_palette_delay = 0;
+		void flush_pending_palette(bool all);
 		std::deque<ObjPixel> m_obj_pixels;
 
 		u8 m_lx = 0;	// X + 8, 0..167

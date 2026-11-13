@@ -39,7 +39,13 @@ PPU::PPU(LCD *lcd) :
 m_lcd(lcd),
 m_vram(Memory(0x2000)),
 m_oam_ram(vector<OAMEntry>(40))
-{}
+{
+	// Palette/output stage: BG palette 6 dots after the pop, window and
+	// OBJ resolved immediately.
+	m_bg_palette_delay = 6;
+	m_win_palette_delay = 0;
+	m_obj_palette_delay = 0;
+}
 
 void PPU::ppu_init(bool boot_rom)
 {
@@ -220,6 +226,10 @@ void PPU::ppu_tick()
 
 void PPU::ppu_reset_line_state()
 {
+	flush_pending_palette(true);
+	m_wx0_write_pending = false;
+	m_wx0_line0_window = false;
+	m_win_palette_delay = 0;
 	m_line_ticks = 0;
 	m_dots = 0;
 	m_pushed_x = 0;
@@ -667,6 +677,10 @@ void PPU::pixel_transfer_tick()
 		return;
 	}
 
+	// The palette/output stage advances every dot, even when the pixel
+	// pipeline is stalled (window activation, OBJ fetch).
+	flush_pending_palette(false);
+
 	// SCX's low 3 bits are sampled once per line at the start of the first
 	// real B fetch (see mealybug m3_scx_low_3_bits). A write after this dot
 	// still changes the tilemap address but not the sub-tile alignment.
@@ -831,6 +845,10 @@ void PPU::pixel_transfer_tick()
 		m_window_active = false;
 		m_window_activating = false;
 		m_window_activation_delay = 0;
+		m_wx0_write_pending = false;
+		m_wx0_line0_window = false;
+		m_win_palette_delay = 0;
+		m_line_obj_out_delay = 0;
 		m_pixel_transfer_phase = m_initial_scx_to_discard != 0
 			? PixelTransferPhase::Discard
 			: PixelTransferPhase::Lx0;
@@ -864,15 +882,27 @@ void PPU::pixel_transfer_tick()
 		m_bg_pixels.clear();
 		m_fetch_phase = FetchPhase::BgTilemap;
 		m_fetch_window = true;
-		m_bg_fetch_wait = (m_lx <= 8) ? 3 : 2;
+		m_bg_fetch_wait = (m_lx <= 11) ? 3 : 2;
 		m_window_activating = false;
 		return;
 	}
+	// WX=0 line-0 case: the write lands after lx=1. Detect the write event
+	// and activate once the first three visible BG pixels have been output.
+	if(m_lcd->m_win_x == 0 && m_last_wx != 0)
+	{
+		m_wx0_write_pending = true;
+	}
+	const bool wx0_line0_trigger = m_wx0_write_pending && m_lx == 11;
 	if(!m_window_active && m_window_active_for_frame && win_enable_now &&
-	   (m_lx == m_last_wx + 1 ||
+	   (wx0_line0_trigger || m_lx == m_last_wx + 1 ||
 	    (m_lx == m_last_wx + 2 && !win_enable_last)))
 	{
 		m_window_activating = true;
+		if(wx0_line0_trigger)
+		{
+			m_wx0_write_pending = false;
+			m_wx0_line0_window = true;
+		}
 		m_window_activation_delay =
 			(m_pixel_transfer_phase == PixelTransferPhase::Discard && m_last_wx == 0) ? 1 : 0;
 		return;
@@ -957,7 +987,9 @@ void PPU::pixel_transfer_tick()
 			const u8 bgp = m_lcd->m_bg_palette;
 
 			const u8 bg_color_index = bg_enable ? bg.color_index : 0;
-			u8 color = static_cast<u8>((bgp >> (bg_color_index * 2)) & 0x03);
+			u8 color_index = bg_color_index;
+			u8 palette_sel = 0;	// BGP
+			bool use_window = bg.window;
 
 			if(obj_enable && !m_obj_pixels.empty())
 			{
@@ -966,15 +998,15 @@ void PPU::pixel_transfer_tick()
 
 				if(obj.color_index != 0 && (!obj.priority || bg_color_index == 0))
 				{
-					const u8 palette = obj.palette ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
-					color = static_cast<u8>((palette >> (obj.color_index * 2)) & 0x03);
+					color_index = obj.color_index;
+					palette_sel = obj.palette ? 2 : 1;	// OBP1 / OBP0
 				}
 			}
 
-			if(m_lcd->m_ly < PPU::YRES && m_pushed_x < PPU::XRES)
-			{
-				m_video_buffer[m_pushed_x + m_lcd->m_ly * PPU::XRES] = color;
-			}
+			m_pending_palette_pixels.push_back(PendingPalettePixel{
+				static_cast<u16>(m_dots), static_cast<u8>(m_pushed_x), m_lcd->m_ly,
+				color_index, palette_sel, use_window, m_line_obj_out_delay});
+			flush_pending_palette(false);
 
 			m_pushed_x++;
 			inc_lx = true;
@@ -1010,8 +1042,36 @@ void PPU::pixel_transfer_tick()
 	}
 }
 
+void PPU::flush_pending_palette(bool all)
+{
+	for(auto it = m_pending_palette_pixels.begin(); it != m_pending_palette_pixels.end(); )
+	{
+		const u8 win_delay = m_wx0_line0_window ? m_bg_palette_delay : m_win_palette_delay;
+		const u8 bg_delay = it->out_delay >= m_bg_palette_delay ? 0
+			: static_cast<u8>(m_bg_palette_delay - it->out_delay);
+		const u8 delay = it->palette_sel != 0 ? m_obj_palette_delay
+			: (it->window ? win_delay : bg_delay);
+		if(!all && static_cast<u16>(m_dots - it->dot) < delay)
+		{
+			++it;
+			continue;
+		}
+		const PendingPalettePixel p = *it;
+		it = m_pending_palette_pixels.erase(it);
+		// DMG BGP delay: on the write tick the PPU sees old | new.
+		const u8 palette = p.palette_sel == 0 ? (m_lcd->m_bg_palette | m_last_bgp)
+			: (p.palette_sel == 1 ? m_lcd->m_obj_palette_0 : m_lcd->m_obj_palette_1);
+		const u8 color = static_cast<u8>((palette >> (p.color_index * 2)) & 0x03);
+		if(p.y < PPU::YRES && p.x < PPU::XRES)
+		{
+			m_video_buffer[p.x + p.y * PPU::XRES] = color;
+		}
+	}
+}
+
 void PPU::finish_pixel_transfer()
 {
+	flush_pending_palette(true);
 	if(m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
@@ -1180,12 +1240,13 @@ void PPU::tick_bg_fetch()
 
 void PPU::push_bg_tile()
 {
+	const bool is_window = m_fetch_window && m_window_active;
 	for(int i = m_bg_fetch_skip; i < 8; i++)
 	{
 		const u8 bit = static_cast<u8>(7 - i);
 		const u8 low = static_cast<u8>((m_fetch_low >> bit) & 1);
 		const u8 high = static_cast<u8>((m_fetch_high >> bit) & 1);
-		m_bg_pixels.push_back(BgPixel{static_cast<u8>((high << 1) | low)});
+		m_bg_pixels.push_back(BgPixel{static_cast<u8>((high << 1) | low), is_window});
 	}
 }
 
@@ -1336,6 +1397,7 @@ void PPU::tick_obj_fetch()
 		// shift does not affect the sprite timing test.
 		m_obj_post_wait = (m_obj_group_total == 1 && m_sprite_entry.entry.m_x != 0 &&
 			!m_lcd->get_lcdc_win_enable()) ? 6 : 0;
+		m_line_obj_out_delay = static_cast<u8>(m_line_obj_out_delay + m_obj_post_wait);
 	}
 }
 
