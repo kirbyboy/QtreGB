@@ -5,6 +5,12 @@
 #include <cstdlib>
 #include <cstdio>
 
+// M-cycle phase mapping (aligned with QtreGB::PhaseClock):
+//   m_t_cycle == 1 -> T0 (opcode fetch / first T-cycle)
+//   m_t_cycle == 2 -> T1
+//   m_t_cycle == 3 -> T2
+//   m_t_cycle == 4 -> T3 (read/write side effects and end of M-cycle)
+
 using namespace qtreGB;
 
 static RegType decode_reg(u8 reg)

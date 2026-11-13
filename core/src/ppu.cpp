@@ -45,10 +45,8 @@ void PPU::ppu_init()
 	m_line_x = 0;
 	m_fetched = 0;
 	m_lcd_on_line = 255;
-	m_oam_read_locked = false;
-	m_vram_read_locked = false;
-	m_oam_write_locked = false;
-	m_vram_write_locked = false;
+	m_oam_bus.reset();
+	m_vram_bus.reset();
 	m_fetcher.set_state(FetchEntry::FS_TILE);
 	m_pixel_fifo = vector<u8>();
 	m_video_buffer = vector<u8>(PPU::YRES * PPU::XRES);
@@ -69,11 +67,6 @@ void PPU::ppu_init()
 
 u8 PPU::ppu_oam_read(u16 address)
 {
-	if(m_oam_read_locked)
-	{
-		return 0xFF;
-	}
-
 	u8 value = 0;
 	switch(address % 4)
 	{
@@ -99,11 +92,6 @@ u8 PPU::ppu_oam_read(u16 address)
 
 void PPU::ppu_oam_write(u16 address, u8 value)
 {
-	if(m_oam_write_locked)
-	{
-		return;
-	}
-
 	ppu_oam_write_dma(address, value);
 }
 
@@ -131,21 +119,11 @@ void PPU::ppu_oam_write_dma(u16 address, u8 value)
 
 u8 PPU::ppu_vram_read(u16 address)
 {
-	if(m_vram_read_locked)
-	{
-		return 0xFF;
-	}
-
 	return m_vram.read(address);
 }
 
 void PPU::ppu_vram_write(u16 address, u8 value)
 {
-	if(m_vram_write_locked)
-	{
-		return;
-	}
-
 	m_vram.write(address, value);
 }
 
@@ -243,10 +221,8 @@ void PPU::ppu_power_off()
 	m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 	m_lcd_on_line = 255;
 	m_lyc_update_countdown = 0;	// A pending delayed update must not fire while the comparison clock is halted
-	m_oam_read_locked = false;
-	m_vram_read_locked = false;
-	m_oam_write_locked = false;
-	m_vram_write_locked = false;
+	m_oam_bus.reset();
+	m_vram_bus.reset();
 	ppu_reset_line_state();
 }
 
@@ -261,10 +237,8 @@ void PPU::ppu_power_on()
 	m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
 	m_lcd_on_line = 0;
 	m_lyc_update_countdown = 0;	// The comparison restarts: apply the instant re-evaluation below instead of any stale pending update
-	m_oam_read_locked = false;
-	m_vram_read_locked = false;
-	m_oam_write_locked = false;
-	m_vram_write_locked = false;
+	m_oam_bus.reset();
+	m_vram_bus.reset();
 	ppu_reset_line_state();
 	check_lyc();
 }
@@ -313,7 +287,7 @@ void PPU::ppu_mode_xfer()
 	if(m_pushed_x > PPU::XRES || m_line_ticks >= 289 /* It should never exit from this condition...*/)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
-		m_oam_read_locked = false;	// Mode 0: OAM is accessible to the CPU again
+		m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);	// Mode 0: OAM is accessible to the CPU again
 		update_stat_irq();
 	}
 }
@@ -327,7 +301,7 @@ void PPU::ppu_mode_hblank()
 		if(m_lcd->m_ly == PPU::YRES) // If reached to the number of lines the lcd has, we go to vblank
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_VBLANK);
-			m_oam_read_locked = false;
+			m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);
 			request_interrupt(InterruptType::IT_VBLANK);
 			update_stat_irq();
 			// The mode 2 (OAM) interrupt is also triggered when vblank starts (mooneye vblank_stat_intr-GS)
@@ -336,7 +310,7 @@ void PPU::ppu_mode_hblank()
 		else
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
-			m_oam_read_locked = true;	// Mode 2: the PPU is scanning OAM, so the CPU cannot read it
+			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);	// Mode 2: the PPU is scanning OAM, so the CPU cannot read it
 			update_stat_irq();
 		}
 		m_line_ticks = 0;
@@ -362,18 +336,18 @@ void PPU::ppu_lcd_on_line()
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
 			m_stat_irq_line = false;
-			m_oam_read_locked = true;
-			m_vram_read_locked = true;
-			m_oam_write_locked = true;
-			m_vram_write_locked = true;
+			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);
+			m_vram_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);
+			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Write);
+			m_vram_bus.acquire(VideoDevice::Ppu, VideoAccess::Write);
 		}
 		else if(t == 250)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
-			m_oam_read_locked = false;
-			m_vram_read_locked = false;
-			m_oam_write_locked = false;
-			m_vram_write_locked = false;
+			m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);
+			m_vram_bus.release(VideoDevice::Ppu, VideoAccess::Read);
+			m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Write);
+			m_vram_bus.release(VideoDevice::Ppu, VideoAccess::Write);
 			if(m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK))
 			{
 				request_interrupt(InterruptType::IT_LCD_STAT);
@@ -390,33 +364,33 @@ void PPU::ppu_lcd_on_line()
 
 	if(t == 2)
 	{
-		m_oam_read_locked = true;
+		m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);
 	}
 	else if(t == 4)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
-		m_oam_write_locked = true;
+		m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Write);
 		update_stat_irq();
 	}
 	else if(t == 80)
 	{
-		m_oam_write_locked = false;
-		m_vram_read_locked = true;
+		m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Write);
+		m_vram_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);
 	}
 	else if(t == 84)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
 		m_stat_irq_line = false;
-		m_oam_write_locked = true;
-		m_vram_write_locked = true;
+		m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Write);
+		m_vram_bus.acquire(VideoDevice::Ppu, VideoAccess::Write);
 	}
 	else if(t == 256)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
-		m_oam_read_locked = false;
-		m_vram_read_locked = false;
-		m_oam_write_locked = false;
-		m_vram_write_locked = false;
+		m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);
+		m_vram_bus.release(VideoDevice::Ppu, VideoAccess::Read);
+		m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Write);
+		m_vram_bus.release(VideoDevice::Ppu, VideoAccess::Write);
 		update_stat_irq();
 	}
 	else if(t == 456)
@@ -445,7 +419,7 @@ void PPU::ppu_mode_vblank()
 		if(m_lcd->m_ly == PPU::LINES_PER_FRAME)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
-			m_oam_read_locked = true;	// Mode 2 of the new frame: OAM is locked again
+			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);	// Mode 2 of the new frame: OAM is locked again
 			m_lcd->m_ly = 0;
 			check_lyc();
 			if(m_frame_done)

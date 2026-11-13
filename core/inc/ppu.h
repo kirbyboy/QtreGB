@@ -14,6 +14,7 @@
 #include "ibus.h"
 #include "oam_entry.h"
 #include "fetcher.h"
+#include "videobus.h"
 
 namespace qtreGB
 {
@@ -56,6 +57,13 @@ class PPU
 
 		const std::vector<u8>& get_video_buffer() const;
 		const std::vector<OAMEntry>& get_oam_line_entry() const;
+
+		// Bus ownership exposed to the CPU view. The PPU keeps these flags;
+		// BusCpuView is the one that drops/returns 0xFF for CPU accesses.
+		bool is_oam_read_locked() const { return m_oam_bus.is_acquired(VideoAccess::Read); }
+		bool is_oam_write_locked() const { return m_oam_bus.is_acquired(VideoAccess::Write); }
+		bool is_vram_read_locked() const { return m_vram_bus.is_acquired(VideoAccess::Read); }
+		bool is_vram_write_locked() const { return m_vram_bus.is_acquired(VideoAccess::Write); }
 
 		void debug_fetcher_begin(u8 line) { m_fetcher.debug_begin(line); }
 		const std::vector<std::string>& debug_fetcher_log() const { return m_fetcher.debug_log(); }
@@ -154,10 +162,8 @@ class PPU
 
 		void request_interrupt(InterruptType IType);
 		// While a lock is active the CPU reads $FF and writes are dropped (mooneye lcdon_timing-GS).
-		bool m_oam_read_locked = false;
-		bool m_vram_read_locked = false;
-		bool m_oam_write_locked = false;
-		bool m_vram_write_locked = false;
+		VideoBus m_oam_bus;
+		VideoBus m_vram_bus;
 		u8 m_lcd_on_line = 255;	// 0/1/2 = special lines after LCD power on, 255 = normal schedule
 
 };
