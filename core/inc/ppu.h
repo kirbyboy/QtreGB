@@ -2,18 +2,14 @@
 #define QTREGB_PPU_H
 
 #include <vector>
-#include <list>
-#include <queue>
 #include <array>
+#include <deque>
 #include <functional>
-#include <string>
 
 #include "types.h"
 #include "memory.h"
-#include "fifo.h"
 #include "ibus.h"
 #include "oam_entry.h"
-#include "fetcher.h"
 #include "videobus.h"
 
 namespace qtreGB
@@ -56,7 +52,6 @@ class PPU
 		void ppu_vram_write(u16 address, u8 value);
 
 		const std::vector<u8>& get_video_buffer() const;
-		const std::vector<OAMEntry>& get_oam_line_entry() const;
 
 		// Bus ownership exposed to the CPU view. The PPU keeps these flags;
 		// BusCpuView is the one that drops/returns 0xFF for CPU accesses.
@@ -65,9 +60,6 @@ class PPU
 		bool is_vram_read_locked() const { return m_vram_bus.is_acquired(VideoAccess::Read); }
 		bool is_vram_write_locked() const { return m_vram_bus.is_acquired(VideoAccess::Write); }
 
-		void debug_fetcher_begin(u8 line) { m_fetcher.debug_begin(line); }
-		const std::vector<std::string>& debug_fetcher_log() const { return m_fetcher.debug_log(); }
-
 		void connect_bus(IBus* bus);
 
 	private:
@@ -75,90 +67,146 @@ class PPU
 		LCD *m_lcd;
 		Memory m_vram;
 		std::vector<OAMEntry> m_oam_ram;	// OAM RAM
-		std::vector<OAMEntry> m_oam_line_entry;	// "List" of available sprites in a line, maximum 10, it just simulates a FIFO, not a real list
+		u8 m_oam_scan_index = 0;	// OAM entry currently being scanned (0..39)
+		u8 m_oam_scan_y = 0;	// Y byte read on the even dot of the current OAM entry
+		u8 m_oam_scan_obj_height = 8;	// Sprite height captured at dot 0 of the scan
+
+		// F5: per-LX sprite entries and pixel pipeline
+		struct BgPixel
+		{
+			u8 color_index = 0;
+		};
+
+		struct ObjPixel
+		{
+			u8 color_index = 0;
+			u8 palette = 0;
+			u8 priority = 0;
+			u8 number = 0;
+			u8 x = 0;
+		};
+
+		struct OamLineEntry
+		{
+			OAMEntry entry;
+			u8 number = 0;
+		};
+
+		enum class PixelTransferPhase
+		{
+			Dummy,
+			Discard,
+			Lx0,
+			Lx8,
+		};
+
+		enum class FetchPhase
+		{
+			BgTilemap,
+			BgLow,
+			BgHigh,
+			BgPush,
+			ObjLow,
+			ObjHigh,
+			ObjPush,
+		};
+
+		std::array<std::vector<OamLineEntry>, 168> m_oam_entries;
+		std::deque<BgPixel> m_bg_pixels;
+		std::deque<ObjPixel> m_obj_pixels;
+
+		u8 m_lx = 0;	// X + 8, 0..167
+		u8 m_initial_scx_to_discard = 0;
+		u8 m_initial_scx_discarded = 0;
+		u8 m_bg_fetch_x = 0;	// pixel X inside the current BG fetch, advances 8 per tile
+		u8 m_window_tile_x = 0;
+		u8 m_oam_scan_count = 0;
+		bool m_window_active = false;
+		bool m_window_activating = false;	// Window trigger seen; activation happens on the next dot
+		u8 m_window_activation_delay = 0;	// Extra dots before activation (WX=0 with SCX>0)
+		bool m_window_active_for_frame = false;
+		bool m_window_just_activated = false;
+		bool m_is_fetching_sprite = false;
+		OamLineEntry m_sprite_entry;
+		u8 m_sprite_low = 0;
+		u8 m_sprite_high = 0;
+		u8 m_obj_fetch_wait = 0;	// Second dot of an OBJ access (2 dots per access)
+		u8 m_obj_post_wait = 0;	// Dot after the OBJ push where the FIFO still waits
+		u8 m_obj_x_total = 0;	// Sprites queued at the current X
+		u8 m_obj_fetch_seq = 0;	// Index of the sprite being fetched at the current X
+		bool m_obj_fast_fetch = false;	// Short 4-dot fetch for alternating sprites at the same X
+		u8 m_last_fetch_lx = 0xFF;	// Last LX where an OBJ fetch was started
+		u16 m_sprite_data_addr = 0;
+		u8 m_sprite_pixels[8] = {};
+
+		PixelTransferPhase m_pixel_transfer_phase = PixelTransferPhase::Dummy;
+		FetchPhase m_fetch_phase = FetchPhase::BgTilemap;
+		FetchPhase m_obj_fetch_phase = FetchPhase::ObjLow;
+		u16 m_fetch_tilemap_addr = 0;
+		u16 m_fetch_data_addr = 0;
+		u8 m_fetch_tile_number = 0;
+		u8 m_fetch_tile_y = 0;	// Tile row latched at the tilemap fetch
+		u8 m_fetch_low = 0;
+		u8 m_fetch_high = 0;
+		u8 m_bg_fetch_wait = 0;	// Second dot of a window access (6-dot window startup)
+		bool m_fetch_window = false;
+
+		void pixel_transfer_tick();
+		void tick_fetcher();
+		void tick_bg_fetch();
+		void tick_obj_fetch();
+		void push_bg_tile();
+		void push_obj_pixels();
+		void start_sprite_fetch();
+		void finish_pixel_transfer();
 		std::vector<u8> m_video_buffer;	// A buffer that has all the pixels of a frame
-		//FetchEntry m_current_fetch_state;	// Indicates actual state of PPU state machine
 		u16 m_line_ticks; // Indicates in which dot of the PPU we are while we are scanning horizontal lines
-		u8 m_line_x;	// Indicates the current pixel in FIFO we are trying to push, may be discarted by SCX
-		u8 m_fetched;	// Indicates how many pixels we have fetched, incresing always in 8(when we get a line from a sprite or background, we always take 8)
-
-
-		//u8 m_window_tile_map;	// Indicates the window map tile fetched for current tile
-		u8 m_window_tile_data_lo;	// Indicates the window tile data fetched for current tile, lo bits data
-		u8 m_window_tile_data_hi;	// Indicates the window tile data fetched for current tile, hi bits data
-
-
-		u8 m_bg_tile_map;	// Indicates the background map tile fetched for current tile
-		std::array<u8, 2> m_bg_tile_data;	// Indicates the background tile data fetched for current tile
-		u8 m_bg_tile_map_x;	// Indicates the X in the 32x32 background tile map
-		u8 m_bg_tile_map_y;	// Indicates the Y in the 32x32 background tile map
-		u8 m_bg_tile_data_y;	// Indicates the row of data treated in a tile
-		void pipeline_load_background_tile();	// Loads background tiles for a line, only the references to tiles is needed for now
-		void pipeline_load_background_data(u8 offset);	// Loads background data tile for a line
-
-		u8 m_window_line;	// Indicates how many window lines are draw in a screen
-		u8 m_window_tile_map;	// Indicates the window tiles data fetched for current position of lcd(in groups of 8 bytes)
-		std::array<u8, 2> m_window_tile_data;	// Indicates the window tile data fetched for current tile
-		void pipeline_load_window_tile();	// Loads window tile needed for a fetch operation.
-		void pipeline_load_window_data(u8 offset);	// Loads window data needed for a fetch operation.
-
-
+		u16 m_dots = 0;	// 0-based dot within the line (m_line_ticks - 1); target timeline unit
+		u8 m_window_line;	// Window tile row used by the current activation
+		u8 m_window_next_row = 0;	// Row for the next window activation
 		//PPU State Machine
 		void ppu_mode_oam();
-		void ppu_mode_xfer();
 		void ppu_mode_vblank();
 		void ppu_mode_hblank();
 		void ppu_lcd_on_line();	// Special line schedule used only for the first 3 lines after the LCD is turned on
+
+		using TickSelector = void (PPU::*)();
+		TickSelector m_tick_selector = &PPU::ppu_mode_oam;	// Current per-dot state (F4)
 
 		void ppu_power_off();	// LCD turned off: force LY=0 and mode 0, reset pipeline state, no interrupts
 		void ppu_power_on();	// LCD turned on: line 0 starts in mode 0 without OAM scan, restart the LYC==LY comparison
 		void ppu_reset_line_state();	// Resets the per-line/pipeline state shared by the LCD power on/off transitions
 
 		void increment_ly();	// Increases lcd counter ly and launches interrupts if needed
+		void schedule_lyc_update();	// Schedules the delayed LYC==LY flag update after an LY change
 		void check_lyc();	// Compares LY with LYC, updates the flag and launches the interrupt if needed, must be called every time LY changes
 		void set_lyc_flag(bool ly_equals_lyc);	// Writes the LYC==LY flag and fires the STAT interrupt on its 0->1 edge
 		bool m_lcd_enabled;	// Last known LCDC.7 state, used to detect LCD power on/off transitions on each tick
 		bool m_stat_irq_line = false;	// Internal STAT IRQ line (latched), cleared on entering mode 3
-		void update_stat_irq();	// Update STAT IRQ with edge detection
-		u8 m_last_lyc;	// Last known LYC value, used to update the LYC==LY comparison when the game writes LYC
+		bool m_pending_stat_irq = false;	// STAT IRQ edge seen last dot; raised on the next dot (1-T delay)
+		bool m_last_stat_irq = false;	// Previous dot's STAT IRQ condition (edge detection)
+		bool m_enable_lyc_eq_ly_irq = true;	// LYC IRQ disabled at dot 453 and last VBlank line 2..6
+		bool m_vblank_last_line = false;	// True while the PPU is on VBlank line 153 (LY is 0 from dot 2 on)
+		void update_stat_irq();	// Update STAT IRQ with edge detection (LCD-on special schedule)
+		void update_stat_irq_for_oam_mode();	// OAM IRQ is checked only on mode transitions
+		void raise_stat_irq();	// Per-dot STAT IRQ edge evaluation
+		u8 m_lyc_seen;	// Last LYC value seen by the PPU, used to detect CPU writes to LYC
 		u8 m_lyc_update_countdown = 0;	// Dots left until the delayed LYC==LY flag update is applied (0 = no update pending)
 		bool m_lyc_update_value = false;	// Value written when the delayed LYC==LY flag update fires
 
+		// DMG: the PPU sees LCDC/BGP/WX/LY/LYC delayed by 1 T-cycle.
+		u8 m_last_lcdc = 0;
+		u8 m_last_bgp = 0;
+		u8 m_last_wx = 0;
+		u8 m_last_ly = 0;
+		u8 m_last_lyc = 0;
+		void update_delayed_registers();
+
 
 		u8 m_pushed_x;	// Indicates how many pixels have been pushed to screen
-		u8 m_discarded_pixels;	// How many pixels must be discarded before starting to process
-
-
-
-
-
-		void load_line_sprites(); // Loads in memory the sprites available in each line, done in OAM mode
-
-		// Pipeline methods
-		void pipeline_fifo_reset();	// Emptys the pixel FIFO
-		void pipeline_process();	// Does all the pipeline process
-		void pipeline_push_pixel();	// Push pixel into screen
-
-
-
-		std::vector<u8> m_sp_tile_data_lo;	// Vector with all the possible sprites in a group of fetched pixels, lo bits data
-		std::vector<u8> m_sp_tile_data_hi;	// Vector with all the possible sprites in a group of fetched pixels, hi bits data
-		void pipeline_load_sprite_tile();	// Loads sprite tiles for a line, only the references to tiles is needed for now
-		void pipeline_load_sprite_data(u8 offset);	// Loads sprite data from tiles in a line
-
-		std::vector<u8> m_pixel_fifo;	// The pixel FIFO
-		// Pixel fifo push and pop
-		void pixel_fifo_push(u8 value);
-		u8 pixel_fifo_pop();
-
-
-		FIFO m_bgw_fifo;	// The backgroung/window FIFO
-		FIFO m_spr_fifo;	// The sprite FIFO
 
 		InterruptCallback m_request_interrupt;
 		FrameCallback m_frame_done;
-
-		Fetcher m_fetcher;
 
 		void request_interrupt(InterruptType IType);
 		// While a lock is active the CPU reads $FF and writes are dropped (mooneye lcdon_timing-GS).

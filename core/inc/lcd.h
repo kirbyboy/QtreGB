@@ -26,6 +26,7 @@ class LCD
 {
 	public:
 		void lcd_init();
+		void tick();	// applies the 1-T delayed STAT write
 
 		u8 read(u16 address);
 		void write(u16 address, u8 value);
@@ -77,6 +78,8 @@ class LCD
 		u8 m_obj_palette_1;	// FF49 — OBP1: OBJ palette 1 data
 		u8 m_win_y;	// FF4A — WY: Window Y position
 		u8 m_win_x;	// FF4B — WX: Window X position plus 7
+		u8 m_pending_stat = 0;	// 1 while a STAT write waits for the next T-cycle
+		u8 m_pending_stat_value = 0;
 };
 
 

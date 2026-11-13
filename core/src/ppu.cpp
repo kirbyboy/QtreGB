@@ -1,11 +1,6 @@
-#include <algorithm>
-
 #include "ppu.h"
 #include "QtreGB.h"
 #include "lcd.h"
-#include "fetcher.h"
-#include "logger.h"
-#include "utils.h"
 
 using namespace qtreGB;
 using namespace std;
@@ -14,11 +9,6 @@ const int PPU::LINES_PER_FRAME = 154;
 const int PPU::TICKS_PER_LINE = 456;
 const int PPU::YRES = 144;
 const int PPU::XRES = 160;
-
-static bool compare_function(OAMEntry e1, OAMEntry e2)
-{
-	return (e1.m_x < e2.m_x);
-}
 
 void PPU::set_interrupt_callback(InterruptCallback cb)
 {
@@ -33,36 +23,32 @@ void PPU::set_frame_callback(FrameCallback cb)
 PPU::PPU(LCD *lcd) :
 m_lcd(lcd),
 m_vram(Memory(0x2000)),
-m_oam_ram(vector<OAMEntry>(40)),
-m_oam_line_entry(vector<OAMEntry>()),
-m_fetcher(Fetcher(m_bgw_fifo, m_spr_fifo))
+m_oam_ram(vector<OAMEntry>(40))
 {}
 
 void PPU::ppu_init()
 {
 	m_line_ticks = 0;
+	m_dots = 0;
 	m_pushed_x = 0;
-	m_line_x = 0;
-	m_fetched = 0;
 	m_lcd_on_line = 255;
 	m_oam_bus.reset();
 	m_vram_bus.reset();
-	m_fetcher.set_state(FetchEntry::FS_TILE);
-	m_pixel_fifo = vector<u8>();
 	m_video_buffer = vector<u8>(PPU::YRES * PPU::XRES);
 
 	m_lcd->lcd_init();
 	m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
+	m_tick_selector = &PPU::ppu_mode_oam;
 
 	m_lcd_enabled = m_lcd->get_lcdc_lcd_enable();
-	m_last_lyc = m_lcd->m_lyc;
+	m_lyc_seen = m_lcd->m_lyc;
 	m_lyc_update_countdown = 0;
+	m_last_stat_irq = false;
+	m_pending_stat_irq = false;
+	m_enable_lyc_eq_ly_irq = true;
+	m_vblank_last_line = false;
 
-	m_oam_line_entry = vector<OAMEntry>();
-
-	m_bgw_fifo.clear();
-	m_spr_fifo.clear();
-	m_fetcher.set_lcd(m_lcd);
+	update_delayed_registers();
 }
 
 u8 PPU::ppu_oam_read(u16 address)
@@ -147,6 +133,16 @@ void PPU::ppu_sync_lcd_power()
 			ppu_power_off();
 		}
 		m_lcd_enabled = lcd_enabled;
+
+		// Power-on can complete the LYC comparison and generate a STAT IRQ.
+		// The LCDC write path calls this synchronously, so the IF bit must be
+		// raised here: waiting for the next ppu_tick would lose the interrupt
+		// before the CPU executes the next instruction (stat_lyc_onoff round 4).
+		if(m_pending_stat_irq)
+		{
+			request_interrupt(InterruptType::IT_LCD_STAT);
+			m_pending_stat_irq = false;
+		}
 	}
 }
 
@@ -156,17 +152,27 @@ void PPU::ppu_tick()
 
 	if(!m_lcd_enabled)
 	{
+		m_lcd->tick();
 		return;
 	}
 
-	if(m_lcd->m_lyc != m_last_lyc)
+	// STAT IRQ requests are delayed by 1 T-cycle: the edge was detected on the
+	// previous dot, so raise it now.
+	if(m_pending_stat_irq)
 	{
-		m_last_lyc = m_lcd->m_lyc;
-		m_lyc_update_countdown = 0;	// The comparison is re-evaluated instantly against the new LYC: cancel any pending delayed update
-		check_lyc();	// The game wrote LYC: LY==LYC must be re-evaluated (it is compared constantly while the PPU is on)
+		request_interrupt(InterruptType::IT_LCD_STAT);
+		m_pending_stat_irq = false;
+	}
+
+	if(m_lcd->m_lyc != m_lyc_seen)
+	{
+		m_lyc_seen = m_lcd->m_lyc;
+		m_lyc_update_countdown = 0;
+		check_lyc();
 	}
 
 	m_line_ticks++;
+	m_dots = m_line_ticks - 1;
 
 	if(m_lyc_update_countdown > 0 && --m_lyc_update_countdown == 0)
 	{
@@ -176,40 +182,23 @@ void PPU::ppu_tick()
 	if(m_lcd_on_line != 255)
 	{
 		ppu_lcd_on_line();
+		m_lcd->tick();
+		update_delayed_registers();
 		return;
 	}
 
-	switch(m_lcd->get_lcds_mode())
-	{
-		case LCDMode::MODE_OAM:
-			ppu_mode_oam();
-			break;
-		case LCDMode::MODE_XFER:
-			ppu_mode_xfer();
-			break;
-		case LCDMode::MODE_VBLANK:
-			ppu_mode_vblank();
-			break;
-		case LCDMode::MODE_HBLANK:
-			ppu_mode_hblank();
-			break;
-		default: break;
-	}
+	(this->*m_tick_selector)();
+	raise_stat_irq();
+	m_lcd->tick();
+	update_delayed_registers();
 }
 
 void PPU::ppu_reset_line_state()
 {
 	m_line_ticks = 0;
+	m_dots = 0;
 	m_pushed_x = 0;
-	m_line_x = 0;
-	m_fetched = 0;
-	m_discarded_pixels = 0;
 	m_window_line = 0;
-	m_oam_line_entry = vector<OAMEntry>();
-	m_bgw_fifo.clear();
-	m_spr_fifo.clear();
-	m_fetcher.reset();
-	m_fetcher.set_window_line(0);
 }
 
 void PPU::ppu_power_off()
@@ -219,8 +208,14 @@ void PPU::ppu_power_off()
 	// (mooneye stat_lyc_onoff). No interrupts are generated.
 	m_lcd->m_ly = 0;
 	m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
+	m_tick_selector = &PPU::ppu_mode_hblank;
 	m_lcd_on_line = 255;
 	m_lyc_update_countdown = 0;	// A pending delayed update must not fire while the comparison clock is halted
+	m_last_stat_irq = false;
+	m_pending_stat_irq = false;
+	m_stat_irq_line = false;
+	m_enable_lyc_eq_ly_irq = true;
+	m_vblank_last_line = false;
 	m_oam_bus.reset();
 	m_vram_bus.reset();
 	ppu_reset_line_state();
@@ -235,84 +230,156 @@ void PPU::ppu_power_on()
 	// (mooneye stat_lyc_onoff).
 	m_lcd->m_ly = 0;
 	m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
+	m_tick_selector = &PPU::ppu_mode_oam;
 	m_lcd_on_line = 0;
 	m_lyc_update_countdown = 0;	// The comparison restarts: apply the instant re-evaluation below instead of any stale pending update
+	m_last_stat_irq = false;
+	m_pending_stat_irq = false;
+	m_enable_lyc_eq_ly_irq = true;
+	m_vblank_last_line = false;
 	m_oam_bus.reset();
 	m_vram_bus.reset();
 	ppu_reset_line_state();
 	check_lyc();
+	update_delayed_registers();
 }
 
 void PPU::ppu_mode_oam()
 {
-	if(m_line_ticks == 1)
+	if(m_dots == 0)
 	{
-		//read oam on the first tick only...
-		m_oam_line_entry.clear();
-
-		load_line_sprites();
-		m_fetcher.load_oam_entries(m_oam_line_entry);
-		//m_fetcher.check_obj(0);	// Check available sprites in lcd X = 0, after that, everytime that m_pushed changes
-	}
-
-	if(m_line_ticks == 80)
-	{
-		m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
-		m_stat_irq_line = false;	// Clear STAT IRQ line on entering mode 3
-
-		m_fetcher.set_state(FetchEntry::FS_TILE);
-		m_pushed_x = 0;
-		m_line_x = 0;
-		m_fetched = 0;
-		pipeline_fifo_reset();
-		//std::fill(m_video_buffer.begin(), m_video_buffer.end(), 0);
-	}
-
-}
-
-void PPU::ppu_mode_xfer()
-{
-	pipeline_process();
-
-	// STAT mode=0 interrupt happens one M-cycle (4 T-cycles) before the actual
-	// mode switch (mooneye ppu.rs: cycles == 1 in AccessVram).
-	if(m_pushed_x == PPU::XRES - 3)
-	{
-		if(m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK))
+		m_oam_scan_index = 0;
+		m_oam_scan_count = 0;
+		m_oam_scan_obj_height = m_lcd->get_lcdc_obj_height();
+		for(auto& entries : m_oam_entries)
 		{
-			request_interrupt(InterruptType::IT_LCD_STAT);
+			entries.clear();
 		}
 	}
 
-	if(m_pushed_x > PPU::XRES || m_line_ticks >= 289 /* It should never exit from this condition...*/)
+	// Per-dot OAM scan: Y on even dots, X/tile/flags on odd dots.
+	if(m_dots < 80 && m_oam_scan_index < 40)
 	{
-		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
-		m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);	// Mode 0: OAM is accessible to the CPU again
-		update_stat_irq();
+		if((m_dots & 1) == 0)
+		{
+			m_oam_scan_y = m_oam_ram[m_oam_scan_index].m_y;
+		}
+		else
+		{
+			OAMEntry entry = m_oam_ram[m_oam_scan_index];
+			entry.m_y = m_oam_scan_y;
+
+			const u8 current_y = m_lcd->m_ly;
+			if(entry.m_y <= current_y + 16 &&
+			   entry.m_y + m_oam_scan_obj_height > current_y + 16)
+			{
+				if(m_oam_scan_count < 10)
+				{
+					if(entry.m_x < 168)
+					{
+						OamLineEntry line_entry;
+						line_entry.entry = entry;
+						line_entry.number = m_oam_scan_index;
+						m_oam_entries[entry.m_x].push_back(line_entry);
+					}
+					m_oam_scan_count++;
+				}
+			}
+
+			m_oam_scan_index++;
+		}
+	}
+
+	if(m_dots == 79)
+	{
+		m_lcd->set_lcds_mode(LCDMode::MODE_XFER);
+		m_tick_selector = &PPU::pixel_transfer_tick;
+
+		// The internal STAT IRQ line is cleared on entering mode 3, unless the
+		// LYC condition is still asserted. Keeping it high blocks the following
+		// STAT interrupts (mooneye stat_irq_blocking).
+		if(!(m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && m_lcd->get_lcds_lyc()))
+		{
+			m_stat_irq_line = false;
+		}
+
+		m_pushed_x = 0;
+		m_lx = 0;
+		m_initial_scx_to_discard = 0;
+		m_initial_scx_discarded = 0;
+		m_bg_fetch_x = 0;
+		m_window_tile_x = 0;
+		m_window_active = false;
+		m_window_just_activated = false;
+		m_is_fetching_sprite = false;
+		m_pixel_transfer_phase = PixelTransferPhase::Dummy;
+		m_fetch_phase = FetchPhase::BgTilemap;
+		m_fetch_window = false;
+		m_bg_pixels.clear();
+		m_obj_pixels.clear();
 	}
 }
 
 void PPU::ppu_mode_hblank()
 {
-	if(m_line_ticks == PPU::TICKS_PER_LINE) // If reached to the end of hblank we increment the internal counter to actual line
+	// The OAM STAT IRQ is signalled at dot 452 on DMG.
+	if(m_dots == 452 && m_lcd->m_ly != PPU::YRES)
 	{
-		increment_ly();
+		update_stat_irq_for_oam_mode();
+	}
 
-		if(m_lcd->m_ly == PPU::YRES) // If reached to the number of lines the lcd has, we go to vblank
+	if(m_dots == 448)
+	{
+		// Scheduler phase calibration: LY++ is nominally at dot 453, but the
+		// CPU/PPU tick order makes the observable change land at 448 here.
+		// OAM is locked and the LYC IRQ window closes at the same point.
+		if(m_lcd->m_ly != PPU::YRES - 1)
+		{
+			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);
+		}
+
+		m_enable_lyc_eq_ly_irq = false;
+		increment_ly();
+	}
+	else if(m_dots == 454)
+	{
+		// The STAT mode changes one dot before the line ends (LY advances at 453).
+		m_enable_lyc_eq_ly_irq = true;
+
+		if(m_lcd->m_ly == PPU::YRES)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_VBLANK);
-			m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);
-			request_interrupt(InterruptType::IT_VBLANK);
-			update_stat_irq();
-			// The mode 2 (OAM) interrupt is also triggered when vblank starts (mooneye vblank_stat_intr-GS)
-			update_stat_irq();
 		}
 		else
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
-			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);	// Mode 2: the PPU is scanning OAM, so the CPU cannot read it
+		}
+
+		// DMG quirk: the OAM source is also signalled when VBlank starts,
+		// at the same time as the VBlank interrupt.
+		if(m_lcd->m_ly == PPU::YRES)
+		{
+			update_stat_irq_for_oam_mode();
+		}
+	}
+	else if(m_dots == PPU::TICKS_PER_LINE - 1)
+	{
+		if(m_lcd->m_ly == PPU::YRES)
+		{
+			m_tick_selector = &PPU::ppu_mode_vblank;
+			m_vblank_last_line = false;
+			m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);
+			request_interrupt(InterruptType::IT_VBLANK);
+			update_stat_irq();
 			update_stat_irq();
 		}
+		else
+		{
+			m_tick_selector = &PPU::ppu_mode_oam;
+			// OAM IRQ was already handled by
+			// update_stat_irq_for_oam_mode() at dot 454.
+		}
+
 		m_line_ticks = 0;
 	}
 }
@@ -405,6 +472,7 @@ void PPU::ppu_lcd_on_line()
 		{
 			m_lcd_on_line = 255;
 			m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
+			m_tick_selector = &PPU::ppu_mode_oam;
 			update_stat_irq();
 		}
 	}
@@ -412,50 +480,80 @@ void PPU::ppu_lcd_on_line()
 
 void PPU::ppu_mode_vblank()
 {
-	if(m_line_ticks == PPU::TICKS_PER_LINE)
+	// On the last VBlank line LY drops to 0 at dot 2, but the line itself
+	// continues until dot 455. Remember that state explicitly: after the reset
+	// LY no longer identifies the line.
+	if(!m_vblank_last_line && m_dots == 0 && m_lcd->m_ly == PPU::LINES_PER_FRAME - 1)
 	{
-		increment_ly();
+		m_vblank_last_line = true;
+	}
 
-		if(m_lcd->m_ly == PPU::LINES_PER_FRAME)
+	if(m_vblank_last_line)
+	{
+		if(m_dots == 2)
+		{
+			m_lcd->m_ly = 0;
+			schedule_lyc_update();
+			m_enable_lyc_eq_ly_irq = false;
+		}
+		else if(m_dots == 7)
+		{
+			m_enable_lyc_eq_ly_irq = true;
+		}
+		else if(m_dots == 453)
+		{
+			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);
+
+			// Start-of-frame OAM STAT IRQ: raised here so that IF is already
+			// set at line 0 dot 0 (mooneye intr_1_2_timing-GS).
+			update_stat_irq_for_oam_mode();
+		}
+		else if(m_dots == PPU::TICKS_PER_LINE - 1)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
-			m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Read);	// Mode 2 of the new frame: OAM is locked again
-			m_lcd->m_ly = 0;
+			m_tick_selector = &PPU::ppu_mode_oam;
+			m_window_active_for_frame = false;
+			m_window_active = false;
+			m_line_ticks = 0;
+			m_window_line = 0;
+			m_window_next_row = 0;
+			m_vblank_last_line = false;
 			check_lyc();
+			update_stat_irq();
+
 			if(m_frame_done)
 			{
 				m_frame_done(true); // We have all the info to draw the screen
 			}
 		}
+		return;
+	}
 
+	// Normal VBlank line.
+	if(m_dots == 453)
+	{
+		m_enable_lyc_eq_ly_irq = false;
+		increment_ly();
+	}
+	else if(m_dots == 454)
+	{
+		m_enable_lyc_eq_ly_irq = true;
+	}
+	else if(m_dots == PPU::TICKS_PER_LINE - 1)
+	{
 		m_line_ticks = 0;
-		m_window_line = 0;
-		m_fetcher.set_window_line(m_window_line);
 	}
 }
 
 void PPU::increment_ly()
 {
-	const u8 finished_line = m_lcd->m_ly;	// the line that has just completed (before LY is advanced)
-
 	m_lcd->m_ly++;
 
-	// The window keeps an internal line counter that advances only on lines where the
-	// window is actually displayed. It is used as the window's tile row, and it must
-	// survive the window being hidden mid-frame (dmg-acid2 draws the right eye, hides the
-	// window with WX=240, then draws the chin continuing from the same counter).
-	const bool window_shown_on_finished_line =
-		m_lcd->get_lcdc_win_enable() &&
-		finished_line < PPU::YRES &&
-		finished_line >= m_lcd->m_win_y &&
-		m_lcd->m_win_x <= 166;
+	schedule_lyc_update();
+}
 
-	if(window_shown_on_finished_line)
-	{
-		m_window_line++;
-		m_fetcher.set_window_line(m_window_line);
-	}
-
+void PPU::schedule_lyc_update()
+{
 	// The LYC==LY flag lags LY changes on the DMG: after LY changes, the new comparison
 	// result is written 4 dots later when it sets and 2 dots later when it clears.
 	// (mooneye lcdon_timing-GS: with LYC=1, STAT shows $80 at dot 452 and $86 at dot 456.)
@@ -475,170 +573,21 @@ void PPU::check_lyc()
 
 void PPU::set_lyc_flag(bool ly_equals_lyc)
 {
+	const bool previous = m_lcd->get_lcds_lyc();
 	m_lcd->set_lcds_lyc(ly_equals_lyc);
-	update_stat_irq();
-}
 
-void PPU::load_line_sprites()
-{
-	u8 current_y = m_lcd->m_ly;
-	u8 sprite_height = m_lcd->get_lcdc_obj_height();
-
-	// We save a list of the maximun 10 sprites that exists in a line
-	// With this loop we get the first 10 elements that exists in OAM memory
-	for(auto oam_ram_element : m_oam_ram)
+	// The STAT interrupt is edge-triggered by the 0->1 transition of the
+	// comparison result. This also makes power-on keep the retained flag
+	// without firing when the result does not change (stat_lyc_onoff).
+	if(ly_equals_lyc && !previous)
 	{
-		if(m_oam_line_entry.size() >= 10)
-		{
-			//max 10 sprites per line...
-			break;
-		}
-
-		if(oam_ram_element.m_y <= current_y + 16 && oam_ram_element.m_y + sprite_height > current_y + 16)
-		{
-			m_oam_line_entry.push_back(oam_ram_element);
-		}
+		update_stat_irq();
 	}
-
-	// With this we have ordered the sprites in the line in the same order of preference in screen, lesser X sprite has preference.
-	// If two sprites have the same X, the earlier object in OAM wins, I hope this works...
-	if(!m_oam_line_entry.empty())
-	{
-		sort(m_oam_line_entry.begin(), m_oam_line_entry.end(), compare_function);
-	}
-}
-
-
-//******************//
-// Pipeline methods //
-//******************//
-void PPU::pipeline_fifo_reset()
-{
-	m_bgw_fifo.clear();
-	m_spr_fifo.clear();
-
-	m_fetcher.reset();
-	m_fetcher.set_current_x(0);
-	m_fetcher.check_mode();
-	//m_fetcher.check_obj(0);
-}
-
-void PPU::pipeline_process()
-{
-	//LOG("line ticks", "======================== " + to_string(static_cast<int>(m_line_ticks)));
-	if((m_line_ticks & 1) == 0)
-	{
-		m_fetcher.tick();
-	}
-
-	pipeline_push_pixel();
-}
-
-void PPU::pipeline_push_pixel()
-{
-	u8 pixel_data = 0;
-
-	// We check in which state we are
-	if(m_line_ticks == 81)
-	{
-		// In the first tick of mode 3 we set the fetcher to fetch background pixels
-		m_fetcher.set_mode(FetchMode::FS_BGD);
-		m_fetcher.set_state(FetchEntry::FS_TILE);
-		m_discarded_pixels = 0;
-		m_fetcher.fill_object_array();
-	}
-
-	if(m_line_ticks < 92 || m_bgw_fifo.empty())
-	{
-		return;
-	}
-
-	if(m_line_ticks == 92)
-	{
-		m_fetcher.set_warming(false);
-	}
-
-	if (m_discarded_pixels < (m_lcd->m_scroll_x % 8))
-	{
-		m_bgw_fifo.pop();
-		if(!m_spr_fifo.empty())
-		{
-			m_spr_fifo.pop();
-		}
-		m_discarded_pixels++;
-		return;
-	}
-
-	FIFOElement bgw_element = m_bgw_fifo.pop();
-	// LCDC bit 0 = 0 blanks the whole BG/window layer: it outputs BGP color 0 while
-	// objects are still drawn on top (dmg-acid2 "hair" rows 8-15).
-	const u8 bgw_color_index = m_lcd->get_lcdc_bgw_enable() ? bgw_element.get_color_index() : 0;
-	pixel_data = (m_lcd->m_bg_palette >> (bgw_color_index * 2)) & 0x03;
-
-	/*
-	if(!m_spr_fifo.empty())
-	{
-		FIFOElement spr_element = m_spr_fifo.pop();
-		LOG("pipeline_push_pixel color", to_hex(spr_element.get_color_index()));
-		if(spr_element.get_color_index() != 0)
-		{
-			if(!spr_element.get_priority())
-			{
-				u8 palette = spr_element.get_palette() ? m_lcd->m_obj_palette_0 : m_lcd->m_obj_palette_1;
-				pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
-			}
-		}
-	}
-	*/
-
-
-	if(m_pushed_x < PPU::XRES)
-	{
-		if(m_lcd->get_lcdc_obj_enable())
-		{
-			if(!m_spr_fifo.empty())
-			{
-				FIFOElement spr_element = m_spr_fifo.pop();
-				if(spr_element.get_color_index() != 0)
-				{
-					if(!spr_element.get_priority() || bgw_color_index == 0)
-					{
-						u8 palette = spr_element.get_palette() ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
-						pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
-					}
-				}
-			}
-			else
-			{
-				FIFOElement spr_element = m_fetcher.get_object_array()[m_pushed_x];
-				if(spr_element.get_color_index() != 0)
-				{
-					if(!spr_element.get_priority() || bgw_color_index == 0)
-					{
-						u8 palette = spr_element.get_palette() ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
-						pixel_data = (palette >> (spr_element.get_color_index() * 2)) & 0x03;
-					}
-				}
-			}
-		}
-
-		m_video_buffer[m_pushed_x +	(m_lcd->m_ly * PPU::XRES)] = pixel_data;
-	}
-	m_pushed_x++;
-	m_fetcher.set_current_x(m_pushed_x);
-	m_fetcher.check_mode();
-}
-
-
-const std::vector<OAMEntry> &PPU::get_oam_line_entry() const
-{
-	return m_oam_line_entry;
 }
 
 void PPU::connect_bus(IBus *bus)
 {
 	m_bus = bus;
-	m_fetcher.set_bus(m_bus);
 }
 
 void PPU::request_interrupt(InterruptType IType)
@@ -673,6 +622,575 @@ void PPU::update_stat_irq()
 	if(match && !m_stat_irq_line)
 	{
 		m_stat_irq_line = true;
+		m_pending_stat_irq = true;	// raised on the next dot (1-T delay)
+	}
+}
+
+//*********************//
+// F5 pixel pipeline   //
+//*********************//
+
+void PPU::pixel_transfer_tick()
+{
+	// m_lx is X + 8 and must stay in [0, 168). If the mode was changed
+	// externally, do not index m_oam_entries out of bounds.
+	if(m_lx >= 168)
+	{
+		finish_pixel_transfer();
+		return;
+	}
+
+	// The window becomes eligible for the rest of the frame once LY == WY.
+	if(m_lcd->get_lcdc_win_enable() && m_lcd->m_ly == m_lcd->m_win_y)
+	{
+		m_window_active_for_frame = true;
+	}
+
+	if(m_dots >= 451)
+	{
+		finish_pixel_transfer();
+		return;
+	}
+
+	if(m_obj_post_wait > 0)
+	{
+		--m_obj_post_wait;
+	}
+
+	tick_fetcher();
+
+	// The OBJ push takes one more dot before the FIFO can be popped: the
+	// object pixels must be available for the next pixel, not the current one.
+	if(m_obj_post_wait > 0)
+	{
+		return;
+	}
+
+	if(m_pixel_transfer_phase == PixelTransferPhase::Dummy)
+	{
+		m_bg_pixels.clear();
+		for(int i = 0; i < 8; i++)
+		{
+			m_bg_pixels.push_back(BgPixel{0});
+		}
+
+		m_initial_scx_to_discard = static_cast<u8>(m_lcd->m_scroll_x % 8);
+		m_initial_scx_discarded = 0;
+		m_last_fetch_lx = 0xFF;
+		m_obj_x_total = 0;
+		m_lx = 0;
+		m_bg_fetch_x = 0;
+		m_fetch_phase = FetchPhase::BgTilemap;
+		m_fetch_window = false;
+		m_window_active = false;
+		m_window_activating = false;
+		m_window_activation_delay = 0;
+		m_pixel_transfer_phase = m_initial_scx_to_discard != 0
+			? PixelTransferPhase::Discard
+			: PixelTransferPhase::Lx0;
+		return;
+	}
+
+	// Window activation: throw away the BG FIFO and restart the fetcher with
+	// the window tilemap at the current LX. On DMG WX/LCDC.WIN are seen with
+	// a 1 T-cycle delay; the +1 case is the documented late-activation glitch.
+	const bool win_enable_now = m_lcd->get_lcdc_win_enable();
+	const bool win_enable_last = (m_last_lcdc & 0x20) != 0;
+
+	// Disabling WIN during mode 3 aborts the window fetch and returns to the
+	// background at the next tile fetch. The already-fetched pixels drain.
+	if((m_window_active || m_window_activating) && !win_enable_last)
+	{
+		m_window_active = false;
+		m_window_activating = false;
+		m_window_activation_delay = 0;
+		m_fetch_window = false;
+		m_fetch_phase = FetchPhase::BgTilemap;
+	}
+
+	if(m_window_activating)
+	{
+		if(m_window_activation_delay > 0)
+		{
+			--m_window_activation_delay;
+			return;
+		}
+
+		// Activate one dot after the trigger: throw away the BG FIFO and
+		// restart the fetcher with the window tilemap.
+		m_window_active = true;
+		m_window_just_activated = true;
+		m_window_tile_x = 0;
+		// The window row advances on every activation, including multiple
+		// activations on the same line.
+		m_window_line = m_window_next_row++;
+		m_bg_pixels.clear();
+		m_fetch_phase = FetchPhase::BgTilemap;
+		m_fetch_window = true;
+		m_window_activating = false;
+		return;
+	}
+	if(!m_window_active && m_window_active_for_frame && win_enable_now &&
+	   (m_lx == m_last_wx + 1 ||
+	    (m_lx == m_last_wx + 2 && !win_enable_last)))
+	{
+		m_window_activating = true;
+		// WX=0 with SCX % 8 > 0 activates one dot later, during the discard.
+		m_window_activation_delay =
+			(m_pixel_transfer_phase == PixelTransferPhase::Discard && m_last_wx == 0) ? 1 : 0;
+		return;
+	}
+
+	// Mode 3 has a four-dot startup before the FIFO starts draining: the
+	// fetcher needs its first tile access before pixel 0 can be produced.
+	// Without it mode 0 starts four dots too early (169 instead of 172 dots).
+	if(m_dots < 85)
+	{
+		return;
+	}
+
+	if(m_pixel_transfer_phase == PixelTransferPhase::Discard)
+	{
+		if(m_is_fetching_sprite || m_obj_post_wait > 0)
+		{
+			return;
+		}
+
+		if(m_lcd->get_lcdc_obj_enable() && !m_oam_entries[m_lx].empty())
+		{
+			start_sprite_fetch();
+			return;
+		}
+
+		if(m_bg_pixels.empty())
+		{
+			return;
+		}
+
+		m_bg_pixels.pop_front();
+		if(!m_obj_pixels.empty())
+		{
+			m_obj_pixels.pop_front();
+		}
+		if(++m_initial_scx_discarded == m_initial_scx_to_discard)
+		{
+			m_pixel_transfer_phase = PixelTransferPhase::Lx0;
+		}
+		return;
+	}
+
+	if(m_pixel_transfer_phase == PixelTransferPhase::Lx0)
+	{
+		if(m_is_fetching_sprite || m_obj_post_wait > 0)
+		{
+			return;
+		}
+
+		if(m_lcd->get_lcdc_obj_enable() && !m_oam_entries[m_lx].empty())
+		{
+			start_sprite_fetch();
+			return;
+		}
+
+		if(m_bg_pixels.empty())
+		{
+			return;
+		}
+
+		m_bg_pixels.pop_front();
+		if(!m_obj_pixels.empty())
+		{
+			m_obj_pixels.pop_front();
+		}
+		if(++m_lx == 8)
+		{
+			m_pixel_transfer_phase = PixelTransferPhase::Lx8;
+		}
+		return;
+	}
+
+	// The STAT mode 0 interrupt is raised one M-cycle before the actual mode
+	// switch; this is what the CPU measures in intr_2_0_timing.
+	if(m_lx == 163 && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && !m_stat_irq_line)
+	{
+		m_stat_irq_line = true;
 		request_interrupt(InterruptType::IT_LCD_STAT);
+	}
+
+	// Visible pixels.
+	if(m_is_fetching_sprite || m_obj_post_wait > 0)
+	{
+		return;
+	}
+
+	if(m_lx < 168 && m_lcd->get_lcdc_obj_enable() && !m_oam_entries[m_lx].empty())
+	{
+		start_sprite_fetch();
+		return;
+	}
+
+	if(m_bg_pixels.empty())
+	{
+		return;
+	}
+
+	const BgPixel bg = m_bg_pixels.front();
+	m_bg_pixels.pop_front();
+
+	// DMG: the PPU sees LCDC/BGP delayed by 1 T-cycle. LX == 8 is the
+	// documented exception for LCDC.
+	const u8 lcdc = m_lcd->m_lcdc;
+	const bool bg_enable = (lcdc & 0x01) != 0;
+	const bool obj_enable = (lcdc & 0x02) != 0;
+	const u8 bgp = m_lcd->m_bg_palette;
+
+	const u8 bg_color_index = bg_enable ? bg.color_index : 0;
+	u8 color = static_cast<u8>((bgp >> (bg_color_index * 2)) & 0x03);
+
+	if(obj_enable && !m_obj_pixels.empty())
+	{
+		const ObjPixel obj = m_obj_pixels.front();
+		m_obj_pixels.pop_front();
+
+		if(obj.color_index != 0 && (!obj.priority || bg_color_index == 0))
+		{
+			const u8 palette = obj.palette ? m_lcd->m_obj_palette_1 : m_lcd->m_obj_palette_0;
+			color = static_cast<u8>((palette >> (obj.color_index * 2)) & 0x03);
+		}
+	}
+
+	if(m_lcd->m_ly < PPU::YRES && m_pushed_x < PPU::XRES)
+	{
+		m_video_buffer[m_pushed_x + m_lcd->m_ly * PPU::XRES] = color;
+	}
+
+	m_pushed_x++;
+	m_lx++;
+
+	if(m_lx >= 168)
+	{
+		finish_pixel_transfer();
+	}
+}
+
+void PPU::finish_pixel_transfer()
+{
+	if(m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
+	{
+		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
+	}
+
+	m_tick_selector = &PPU::ppu_mode_hblank;
+	m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);
+	m_is_fetching_sprite = false;
+	update_stat_irq();
+}
+
+void PPU::tick_fetcher()
+{
+	if(m_window_activating)
+	{
+		return;	// The window trigger skips the next fetcher tick
+	}
+
+	if(m_is_fetching_sprite)
+	{
+		tick_obj_fetch();
+	}
+	else
+	{
+		tick_bg_fetch();
+	}
+}
+
+void PPU::tick_bg_fetch()
+{
+	if(m_bg_fetch_wait > 0)
+	{
+		--m_bg_fetch_wait;
+		return;
+	}
+
+	if(m_fetch_phase == FetchPhase::BgTilemap)
+	{
+		const u16 x = static_cast<u16>(m_bg_fetch_x) + m_lcd->m_scroll_x;
+		const u16 y = static_cast<u16>(m_lcd->m_ly) + m_lcd->m_scroll_y;
+		u16 tilemap_x;
+		u16 tilemap_y;
+		u16 tilemap_base;
+
+		if(m_fetch_window && m_window_active)
+		{
+			tilemap_x = m_window_tile_x++;
+			tilemap_y = static_cast<u16>(m_window_line / 8);
+			tilemap_base = m_lcd->get_lcdc_win_map_area();
+		}
+		else
+		{
+			tilemap_x = (x / 8) & 0x1F;
+			tilemap_y = (y / 8) & 0x1F;
+			tilemap_base = m_lcd->get_lcdc_bg_map_area();
+		}
+
+		m_fetch_tilemap_addr = static_cast<u16>(tilemap_base + tilemap_y * 32 + tilemap_x);
+		m_fetch_tile_number = m_bus->read(m_fetch_tilemap_addr);
+		if(m_fetch_window && m_window_active)
+		{
+			m_bg_fetch_wait = 1;
+		}
+
+		// Latch the tile row with the tile number. The LCDC data area is
+		// still sampled at the low-byte access, matching the tile-select
+		// change tests.
+		m_fetch_tile_y = (m_fetch_window && m_window_active)
+			? static_cast<u8>(m_window_line % 8)
+			: static_cast<u8>((m_lcd->m_ly + m_lcd->m_scroll_y) % 8);
+		m_fetch_phase = FetchPhase::BgLow;
+		return;
+	}
+
+	if(m_fetch_phase == FetchPhase::BgLow)
+	{
+		const u16 tile_base = m_lcd->get_lcdc_bgw_data_area();
+		const u16 tile_data = (tile_base == 0x8800)
+			? static_cast<u16>(0x9000 + static_cast<int8_t>(m_fetch_tile_number) * 16)
+			: static_cast<u16>(0x8000 + m_fetch_tile_number * 16);
+		m_fetch_data_addr = static_cast<u16>(tile_data + m_fetch_tile_y * 2);
+		m_fetch_low = m_bus->read(m_fetch_data_addr);
+		m_fetch_phase = FetchPhase::BgHigh;
+		if(m_fetch_window && m_window_active)
+		{
+			m_bg_fetch_wait = 1;
+		}
+		return;
+	}
+
+	if(m_fetch_phase == FetchPhase::BgHigh)
+	{
+		// The high byte re-samples LCDC (tile-select tests change the data
+		// area between the two accesses), but keeps the row latched at the
+		// tilemap fetch so a mid-tile SCY change cannot corrupt the byte pair.
+		const u16 tile_base = m_lcd->get_lcdc_bgw_data_area();
+		const u16 tile_data = (tile_base == 0x8800)
+			? static_cast<u16>(0x9000 + static_cast<int8_t>(m_fetch_tile_number) * 16)
+			: static_cast<u16>(0x8000 + m_fetch_tile_number * 16);
+		const u8 tile_y = (m_fetch_window && m_window_active)
+			? static_cast<u8>(m_window_line % 8)
+			: m_fetch_tile_y;
+		m_fetch_data_addr = static_cast<u16>(tile_data + tile_y * 2);
+		m_fetch_high = m_bus->read(m_fetch_data_addr + 1);
+		m_fetch_phase = FetchPhase::BgPush;
+		if(m_fetch_window && m_window_active)
+		{
+			m_bg_fetch_wait = 1;
+		}
+		return;
+	}
+
+	if(m_fetch_phase == FetchPhase::BgPush)
+	{
+		// The FIFO is filled with a whole tile at once, so the fetcher must
+		// wait until it is empty; meanwhile it has already fetched the next
+		// tile and is ready to push.
+		if(!m_bg_pixels.empty())
+		{
+			return;
+		}
+
+		push_bg_tile();
+		m_fetch_phase = FetchPhase::BgTilemap;
+		m_bg_fetch_x = static_cast<u8>(m_bg_fetch_x + 8);
+	}
+}
+
+void PPU::push_bg_tile()
+{
+	for(int i = 0; i < 8; i++)
+	{
+		const u8 bit = static_cast<u8>(7 - i);
+		const u8 low = static_cast<u8>((m_fetch_low >> bit) & 1);
+		const u8 high = static_cast<u8>((m_fetch_high >> bit) & 1);
+		m_bg_pixels.push_back(BgPixel{static_cast<u8>((high << 1) | low)});
+	}
+}
+
+void PPU::start_sprite_fetch()
+{
+	if(m_lx >= 168)
+	{
+		return;
+	}
+
+	if(m_last_fetch_lx != m_lx)
+	{
+		m_last_fetch_lx = m_lx;
+		m_obj_x_total = 0;
+	}
+	if(m_obj_x_total == 0)
+	{
+		m_obj_x_total = static_cast<u8>(m_oam_entries[m_lx].size());
+	}
+	m_obj_fetch_seq = static_cast<u8>(m_obj_x_total - m_oam_entries[m_lx].size());
+	const bool fast_obj_fetch = (m_obj_fetch_seq >= 2 && (m_obj_fetch_seq & 1) == 0);
+	m_obj_fast_fetch = fast_obj_fetch;
+
+	m_sprite_entry = m_oam_entries[m_lx].front();
+	m_oam_entries[m_lx].erase(m_oam_entries[m_lx].begin());
+
+	m_is_fetching_sprite = true;
+	m_obj_fetch_phase = FetchPhase::ObjLow;
+	m_sprite_low = 0;
+	m_sprite_high = 0;
+	m_sprite_data_addr = 0;
+}
+
+void PPU::tick_obj_fetch()
+{
+	if(m_obj_fetch_wait > 0)
+	{
+		--m_obj_fetch_wait;
+		return;
+	}
+
+	if(m_obj_fetch_phase == FetchPhase::ObjLow)
+	{
+		const u8 height = m_lcd->get_lcdc_obj_height();
+		u8 tile = m_sprite_entry.entry.m_tile;
+		if(height == 16)
+		{
+			tile &= static_cast<u8>(~1);
+		}
+
+		u8 row = static_cast<u8>(m_lcd->m_ly + 16 - m_sprite_entry.entry.m_y);
+		if((m_sprite_entry.entry.m_flags & 0x40) != 0)
+		{
+			row = static_cast<u8>((height - 1) - row);
+		}
+
+		m_sprite_data_addr = static_cast<u16>(0x8000 + tile * 16 + row * 2);
+		m_sprite_low = m_bus->read(m_sprite_data_addr);
+		m_obj_fetch_phase = FetchPhase::ObjHigh;
+		m_obj_fetch_wait = m_obj_fast_fetch ? 0 : 1;
+		return;
+	}
+
+	if(m_obj_fetch_phase == FetchPhase::ObjHigh)
+	{
+		m_sprite_high = m_bus->read(m_sprite_data_addr + 1);
+		m_obj_fetch_phase = FetchPhase::ObjPush;
+		m_obj_fetch_wait = m_obj_fast_fetch ? 0 : 1;
+		return;
+	}
+
+	if(m_obj_fetch_phase == FetchPhase::ObjPush)
+	{
+		push_obj_pixels();
+		m_is_fetching_sprite = false;
+		m_obj_fetch_phase = FetchPhase::ObjLow;
+		// Hardware sprite fetch cadence at the same X: 8, 8, 4, 8, 4... dots.
+		m_obj_post_wait = m_obj_fast_fetch ? 1 : 3;
+
+	}
+}
+
+void PPU::push_obj_pixels()
+{
+	const bool x_flip = (m_sprite_entry.entry.m_flags & 0x20) != 0;
+	const u8 palette = static_cast<u8>((m_sprite_entry.entry.m_flags >> 4) & 1);
+	const u8 priority = static_cast<u8>((m_sprite_entry.entry.m_flags >> 7) & 1);
+
+	ObjPixel pixels[8];
+	for(int i = 0; i < 8; i++)
+	{
+		const u8 bit = static_cast<u8>(x_flip ? i : 7 - i);
+		const u8 low = static_cast<u8>((m_sprite_low >> bit) & 1);
+		const u8 high = static_cast<u8>((m_sprite_high >> bit) & 1);
+		pixels[i] = ObjPixel{
+			static_cast<u8>((high << 1) | low),
+			palette,
+			priority,
+			m_sprite_entry.number,
+			m_sprite_entry.entry.m_x};
+	}
+
+	const size_t old_size = m_obj_pixels.size();
+	for(size_t i = 0; i < 8; i++)
+	{
+		if(i < old_size)
+		{
+			ObjPixel& old = m_obj_pixels[i];
+			const ObjPixel& pixel = pixels[i];
+			const bool overwrite =
+				pixel.color_index != 0 &&
+				(old.color_index == 0 ||
+				 pixel.x < old.x ||
+				 (pixel.x == old.x && pixel.number < old.number));
+
+			if(overwrite)
+			{
+				old = pixel;
+			}
+		}
+		else
+		{
+			m_obj_pixels.push_back(pixels[i]);
+		}
+	}
+}
+
+void PPU::update_delayed_registers()
+{
+	// On DMG the PPU sees these registers delayed by 1 T-cycle: this dot uses
+	// the snapshot from the previous dot.
+	m_last_lcdc = m_lcd->m_lcdc;
+	m_last_bgp = m_lcd->m_bg_palette;
+	m_last_wx = m_lcd->m_win_x;
+	m_last_ly = m_lcd->m_ly;
+	m_last_lyc = m_lcd->m_lyc;
+}
+
+void PPU::raise_stat_irq()
+{
+	const bool lyc_eq_ly = m_enable_lyc_eq_ly_irq && (m_last_lyc == m_last_ly);
+
+	const bool lyc_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && lyc_eq_ly;
+	const bool hblank_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) &&
+		m_lcd->get_lcds_mode() == LCDMode::MODE_HBLANK;
+	// The DMG OAM-in-VBlank quirk is a one-shot event raised on entering
+	// VBlank (see update_stat_irq_for_oam_mode), not a condition that stays
+	// true for the whole VBlank period.
+	const bool vblank_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_VBLANK) &&
+		m_lcd->get_lcds_mode() == LCDMode::MODE_VBLANK;
+
+	const bool irq = lyc_irq || hblank_irq || vblank_irq;
+
+	// Latch the internal STAT IRQ line: while it stays high no new interrupt
+	// is requested. It is only cleared on entering mode 3 (see ppu_mode_oam).
+	if(irq && !m_stat_irq_line)
+	{
+		m_stat_irq_line = true;
+		m_pending_stat_irq = true;
+	}
+
+	if(m_lcd->get_lcds_mode() == LCDMode::MODE_XFER && !irq)
+	{
+		m_stat_irq_line = false;
+	}
+
+	m_last_stat_irq = irq;
+}
+
+void PPU::update_stat_irq_for_oam_mode()
+{
+	const bool lyc_eq_ly_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && (m_last_lyc == m_last_ly);
+	const bool lyc_eq_next_ly_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) &&
+		(m_last_lyc == static_cast<u8>(m_last_ly + 1));
+	const bool irq = m_lcd->get_lcds_stat_int(StatSRC::SS_OAM) || lyc_eq_ly_irq;
+
+	m_pending_stat_irq = m_pending_stat_irq || (m_last_stat_irq < irq);
+
+	if(lyc_eq_next_ly_irq)
+	{
+		m_last_stat_irq = irq;
 	}
 }

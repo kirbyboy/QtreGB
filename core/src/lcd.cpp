@@ -16,6 +16,20 @@ void LCD::lcd_init()
 	m_obj_palette_1 = 0xFF;
 	m_win_y = 0;
 	m_win_x = 0;
+	m_pending_stat = 0;
+	m_pending_stat_value = 0;
+}
+
+void LCD::tick()
+{
+	// On DMG a STAT write takes 1 T-cycle to become visible. The CPU writes it
+	// during its phase; the PPU applies it at the end of the current dot, so
+	// the next dot reads the new enable bits.
+	if(m_pending_stat)
+	{
+		m_lcds = static_cast<u8>(m_pending_stat_value | (m_lcds & 0x07));
+		m_pending_stat = 0;
+	}
 }
 
 u8 LCD::read(u16 address)
@@ -42,7 +56,11 @@ void LCD::write(u16 address, u8 value)
 	switch(address)
 	{
 		case 0: m_lcdc = value; break;
-		case 1: m_lcds = (value & 0x78) | (m_lcds & 0x07); break; // PPU mode  and LYC == LY are read only, bit 7 unused
+		case 1:
+			// On DMG STAT takes 1 T-cycle to become visible; LCD::tick() applies it.
+			m_pending_stat_value = static_cast<u8>(value & 0x78);
+			m_pending_stat = 1;
+			break;
 		case 2: m_scroll_y = value; break;
 		case 3: m_scroll_x = value; break;
 		case 4: /*m_ly = value*/; break;	// read_only
