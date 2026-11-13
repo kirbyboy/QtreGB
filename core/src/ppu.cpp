@@ -864,6 +864,7 @@ void PPU::pixel_transfer_tick()
 		m_bg_pixels.clear();
 		m_fetch_phase = FetchPhase::BgTilemap;
 		m_fetch_window = true;
+		m_bg_fetch_wait = (m_lx <= 8) ? 3 : 2;
 		m_window_activating = false;
 		return;
 	}
@@ -1140,12 +1141,30 @@ void PPU::tick_bg_fetch()
 	{
 		if(m_bg_pixels.empty())
 		{
+			// Window reactivation zero pixel: if the window was eligible at
+			// some point this frame and this push lands on the current WX,
+			// push a zero pixel instead of the fetched tile (DMG glitch).
+			// The first window tile after activation is the exception.
+			if(m_window_active_for_frame &&
+			   m_lx == m_lcd->m_win_x && !m_window_just_activated)
+			{
+				m_bg_pixels.push_back(BgPixel{0});
+				return;
+			}
+
 			// Push the cached tile and move on. Do not start an OBJ on this
 			// tick: the BG fetcher first fetches the next tile, and the OBJ
 			// is served at that next push phase.
 			push_bg_tile();
 			m_fetch_phase = FetchPhase::BgTilemap;
 			m_bg_fetch_x = static_cast<u8>(m_bg_fetch_x + 8);
+			if(m_window_just_activated)
+			{
+				// The first window tile fetch takes 6 dots: start the next
+				// tilemap access in the same tick as the push.
+				m_window_just_activated = false;
+				tick_bg_fetch();
+			}
 			return;
 		}
 
@@ -1315,7 +1334,8 @@ void PPU::tick_obj_fetch()
 		// tile fetch with the point where SCX is sampled. The CPU-visible
 		// mode 0 is handled by the per-line dot budget, so this visual phase
 		// shift does not affect the sprite timing test.
-		m_obj_post_wait = (m_obj_group_total == 1 && m_sprite_entry.entry.m_x != 0) ? 6 : 0;
+		m_obj_post_wait = (m_obj_group_total == 1 && m_sprite_entry.entry.m_x != 0 &&
+			!m_lcd->get_lcdc_win_enable()) ? 6 : 0;
 	}
 }
 
