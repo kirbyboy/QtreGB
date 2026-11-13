@@ -66,9 +66,9 @@ void Z80GB::tick()
 	}
 }
 
-void Z80GB::reset()
+void Z80GB::reset(bool boot_rom)
 {
-	m_pc = 0x0100;
+	m_pc = boot_rom ? 0x0000 : 0x0100;
 	m_sp = 0xFFFE;
 	m_a = 0x01;
 	m_f = 0xB0;

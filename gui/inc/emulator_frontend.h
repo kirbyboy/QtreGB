@@ -18,8 +18,10 @@ class EmulatorFrontend
 		std::unique_ptr<EmulatorInstance> m_emulator;
 
 		std::string open_rom_dialog();
+		std::string open_bios_dialog();
 		void draw_layers_window();
 		bool m_show_layers_window;
+		std::string m_bios_message;
 
 	enum GbButton : u8
 	{

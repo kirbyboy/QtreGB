@@ -10,6 +10,21 @@ const int PPU::TICKS_PER_LINE = 456;
 const int PPU::YRES = 144;
 const int PPU::XRES = 160;
 
+namespace
+{
+int floor_div8(int value)
+{
+	return value >= 0 ? value / 8 : -(((-value) + 7) / 8);
+}
+
+int floor_mod8(int value)
+{
+	const int remainder = value % 8;
+	return remainder < 0 ? remainder + 8 : remainder;
+}
+
+}
+
 void PPU::set_interrupt_callback(InterruptCallback cb)
 {
 	m_request_interrupt = cb;
@@ -26,7 +41,7 @@ m_vram(Memory(0x2000)),
 m_oam_ram(vector<OAMEntry>(40))
 {}
 
-void PPU::ppu_init()
+void PPU::ppu_init(bool boot_rom)
 {
 	m_line_ticks = 0;
 	m_dots = 0;
@@ -36,9 +51,19 @@ void PPU::ppu_init()
 	m_vram_bus.reset();
 	m_video_buffer = vector<u8>(PPU::YRES * PPU::XRES);
 
-	m_lcd->lcd_init();
-	m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
-	m_tick_selector = &PPU::ppu_mode_oam;
+	m_lcd->lcd_init(boot_rom);
+	if(boot_rom)
+	{
+		// Power-on DMG state: the LCD is off until the boot ROM writes LCDC.
+		// The PPU stays idle in mode 0 and ppu_power_on() starts it later.
+		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
+		m_tick_selector = &PPU::ppu_mode_hblank;
+	}
+	else
+	{
+		m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
+		m_tick_selector = &PPU::ppu_mode_oam;
+	}
 
 	m_lcd_enabled = m_lcd->get_lcdc_lcd_enable();
 	m_lyc_seen = m_lcd->m_lyc;
@@ -255,6 +280,7 @@ void PPU::ppu_mode_oam()
 		{
 			entries.clear();
 		}
+		m_oam_served_count.fill(0);
 	}
 
 	// Per-dot OAM scan: Y on even dots, X/tile/flags on odd dots.
@@ -640,6 +666,14 @@ void PPU::pixel_transfer_tick()
 		return;
 	}
 
+	// SCX's low 3 bits are sampled once per line at the start of the first
+	// real B fetch (see mealybug m3_scx_low_3_bits). A write after this dot
+	// still changes the tilemap address but not the sub-tile alignment.
+	if(m_dots == 89)
+	{
+		m_bg_line_scx_low = static_cast<u8>(m_lcd->m_scroll_x % 8);
+	}
+
 	// The window becomes eligible for the rest of the frame once LY == WY.
 	if(m_lcd->get_lcdc_win_enable() && m_lcd->m_ly == m_lcd->m_win_y)
 	{
@@ -676,10 +710,27 @@ void PPU::pixel_transfer_tick()
 
 		m_initial_scx_to_discard = static_cast<u8>(m_lcd->m_scroll_x % 8);
 		m_initial_scx_discarded = 0;
-		m_last_fetch_lx = 0xFF;
-		m_obj_x_total = 0;
+		m_obj_considered_tiles.clear();
+		m_obj_multiple_groups = false;
+		{
+			int groups = 0;
+			for(const auto& entries : m_oam_entries)
+			{
+				if(!entries.empty())
+				{
+					++groups;
+					if(groups > 1) break;
+				}
+			}
+			m_obj_multiple_groups = groups > 1;
+		}
+		m_last_group_lx = 0xFF;
+		m_obj_group_total = 0;
 		m_lx = 0;
 		m_bg_fetch_x = 0;
+		m_bg_fetch_skip = 0;
+		m_bg_prev_scx_low = static_cast<u8>(m_lcd->m_scroll_x % 8);
+		m_bg_line_scx_low = m_bg_prev_scx_low;
 		m_fetch_phase = FetchPhase::BgTilemap;
 		m_fetch_window = false;
 		m_window_active = false;
@@ -756,7 +807,7 @@ void PPU::pixel_transfer_tick()
 			return;
 		}
 
-		if(m_lcd->get_lcdc_obj_enable() && !m_oam_entries[m_lx].empty())
+		if(m_lcd->get_lcdc_obj_enable() && oam_entry_pending(m_lx))
 		{
 			start_sprite_fetch();
 			return;
@@ -786,7 +837,7 @@ void PPU::pixel_transfer_tick()
 			return;
 		}
 
-		if(m_lcd->get_lcdc_obj_enable() && !m_oam_entries[m_lx].empty())
+		if(m_lcd->get_lcdc_obj_enable() && oam_entry_pending(m_lx))
 		{
 			start_sprite_fetch();
 			return;
@@ -809,6 +860,16 @@ void PPU::pixel_transfer_tick()
 		return;
 	}
 
+	// Expose mode 0 one dot before the last pixel finishes. The framebuffer
+	// still receives the final pixels, but the CPU observes the mode switch
+	// at the end-of-line timing used by the sprite timing test. OBJs at the
+	// last tile must finish their fetch and penalty first.
+	if(m_lx == 167 && !oam_entry_pending(167) && !m_is_fetching_sprite &&
+	   m_obj_post_wait == 0 && m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
+	{
+		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
+	}
+
 	// The STAT mode 0 interrupt is raised one M-cycle before the actual mode
 	// switch; this is what the CPU measures in intr_2_0_timing.
 	if(m_lx == 163 && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && !m_stat_irq_line)
@@ -823,7 +884,7 @@ void PPU::pixel_transfer_tick()
 		return;
 	}
 
-	if(m_lx < 168 && m_lcd->get_lcdc_obj_enable() && !m_oam_entries[m_lx].empty())
+	if(m_lx < 168 && m_lcd->get_lcdc_obj_enable() && oam_entry_pending(m_lx))
 	{
 		start_sprite_fetch();
 		return;
@@ -913,6 +974,24 @@ void PPU::tick_bg_fetch()
 
 	if(m_fetch_phase == FetchPhase::BgTilemap)
 	{
+		if(m_fetch_window && m_window_active)
+		{
+			// The window has its own tile grid: no SCX sub-tile offset.
+			m_bg_fetch_skip = 0;
+			m_bg_prev_scx_low = static_cast<u8>(m_lcd->m_scroll_x % 8);
+		}
+		else
+		{
+			const u8 scx_low = m_bg_line_scx_low;
+			// The first tile of the line is aligned by the initial SCX
+			// discard. Later tiles only need to discard the difference when
+			// SCX's low bits change in the middle of the line.
+			m_bg_fetch_skip = (m_bg_fetch_x == 0)
+				? 0
+				: static_cast<u8>((scx_low - m_bg_prev_scx_low) & 0x07);
+			m_bg_prev_scx_low = scx_low;
+		}
+
 		const u16 x = static_cast<u16>(m_bg_fetch_x) + m_lcd->m_scroll_x;
 		const u16 y = static_cast<u16>(m_lcd->m_ly) + m_lcd->m_scroll_y;
 		u16 tilemap_x;
@@ -1005,7 +1084,7 @@ void PPU::tick_bg_fetch()
 
 void PPU::push_bg_tile()
 {
-	for(int i = 0; i < 8; i++)
+	for(int i = m_bg_fetch_skip; i < 8; i++)
 	{
 		const u8 bit = static_cast<u8>(7 - i);
 		const u8 low = static_cast<u8>((m_fetch_low >> bit) & 1);
@@ -1021,21 +1100,89 @@ void PPU::start_sprite_fetch()
 		return;
 	}
 
-	if(m_last_fetch_lx != m_lx)
+	if(m_last_group_lx != m_lx)
 	{
-		m_last_fetch_lx = m_lx;
-		m_obj_x_total = 0;
+		m_last_group_lx = m_lx;
+		m_obj_group_total = static_cast<u8>(m_oam_entries[m_lx].size());
 	}
-	if(m_obj_x_total == 0)
-	{
-		m_obj_x_total = static_cast<u8>(m_oam_entries[m_lx].size());
-	}
-	m_obj_fetch_seq = static_cast<u8>(m_obj_x_total - m_oam_entries[m_lx].size());
-	const bool fast_obj_fetch = (m_obj_fetch_seq >= 2 && (m_obj_fetch_seq & 1) == 0);
-	m_obj_fast_fetch = fast_obj_fetch;
 
-	m_sprite_entry = m_oam_entries[m_lx].front();
-	m_oam_entries[m_lx].erase(m_oam_entries[m_lx].begin());
+	m_sprite_entry = m_oam_entries[m_lx][m_oam_served_count[m_lx]];
+	++m_oam_served_count[m_lx];
+
+	// DMG OBJ penalty (Pan Docs): each OBJ costs a flat 6 dots. The first OBJ
+	// found in a given BG/window tile also waits for the rest of that tile's
+	// background fetch: 5 - (pixel X inside the tile) extra dots, clamped to
+	// zero. The documented X=0 exception is 11 dots; three of them overlap
+	// with the mode-3 startup in this scheduler, so the net cost is 8.
+	const int screen_x = static_cast<int>(m_sprite_entry.entry.m_x) - 8;
+	const int window_x = static_cast<int>(m_lcd->m_win_x) - 7;
+	const bool window_tile = m_window_active && m_lcd->get_lcdc_win_enable() && screen_x >= window_x;
+
+	int tile_key;
+	int pixel_in_tile;
+	if(window_tile)
+	{
+		const int x = screen_x - window_x;
+		tile_key = 1000 + floor_div8(x);
+		pixel_in_tile = floor_mod8(x);
+	}
+	else
+	{
+		const int x = screen_x + static_cast<int>(m_lcd->m_scroll_x);
+		tile_key = floor_div8(x);
+		pixel_in_tile = floor_mod8(x);
+	}
+
+	bool tile_considered = false;
+	for(int key : m_obj_considered_tiles)
+	{
+		if(key == tile_key)
+		{
+			tile_considered = true;
+			break;
+		}
+	}
+	if(!tile_considered)
+	{
+		m_obj_considered_tiles.push_back(tile_key);
+	}
+
+	if(m_sprite_entry.entry.m_x == 0 && !tile_considered)
+	{
+		m_obj_penalty = 8;
+	}
+	else if(tile_considered)
+	{
+		m_obj_penalty = 6;
+	}
+	else
+	{
+		int extra = 5 - pixel_in_tile;
+		if(extra < 0)
+		{
+			extra = 0;
+		}
+		m_obj_penalty = static_cast<u8>(6 + extra);
+
+		// When several OBJs share the same X, the first one's sub-tile wait
+		// is absorbed by the rest of the group. The group timing matches
+		// 10 dots for p=0/1 and the flat 6-dot fetch for p=2..7.
+		if(m_obj_group_total > 1)
+		{
+			if(pixel_in_tile >= 4)
+			{
+				m_obj_penalty = 6;
+			}
+			else if(pixel_in_tile >= 2)
+			{
+				m_obj_penalty = m_obj_multiple_groups ? 7 : 6;
+			}
+			else if(pixel_in_tile == 0)
+			{
+				m_obj_penalty = 10;
+			}
+		}
+	}
 
 	m_is_fetching_sprite = true;
 	m_obj_fetch_phase = FetchPhase::ObjLow;
@@ -1070,7 +1217,7 @@ void PPU::tick_obj_fetch()
 		m_sprite_data_addr = static_cast<u16>(0x8000 + tile * 16 + row * 2);
 		m_sprite_low = m_bus->read(m_sprite_data_addr);
 		m_obj_fetch_phase = FetchPhase::ObjHigh;
-		m_obj_fetch_wait = m_obj_fast_fetch ? 0 : 1;
+		m_obj_fetch_wait = 1;
 		return;
 	}
 
@@ -1078,7 +1225,7 @@ void PPU::tick_obj_fetch()
 	{
 		m_sprite_high = m_bus->read(m_sprite_data_addr + 1);
 		m_obj_fetch_phase = FetchPhase::ObjPush;
-		m_obj_fetch_wait = m_obj_fast_fetch ? 0 : 1;
+		m_obj_fetch_wait = 1;
 		return;
 	}
 
@@ -1087,9 +1234,13 @@ void PPU::tick_obj_fetch()
 		push_obj_pixels();
 		m_is_fetching_sprite = false;
 		m_obj_fetch_phase = FetchPhase::ObjLow;
-		// Hardware sprite fetch cadence at the same X: 8, 8, 4, 8, 4... dots.
-		m_obj_post_wait = m_obj_fast_fetch ? 1 : 3;
-
+		// The three fetch accesses take 6 dots; the remaining penalty is the
+		// wait for the background fetch (6..11 dots total per OBJ).
+		// A lone sprite at X>0 starts after the first BG pixel; the background
+		// pipe needs three more dots to align the next tile fetch with the
+		// point where SCX is sampled.
+		const u8 x_extra = (m_obj_group_total == 1 && m_sprite_entry.entry.m_x != 0) ? 3 : 0;
+		m_obj_post_wait = static_cast<u8>(m_obj_penalty - 5 + x_extra);
 	}
 }
 

@@ -25,7 +25,7 @@ enum class StatSRC:u8
 class LCD
 {
 	public:
-		void lcd_init();
+		void lcd_init(bool boot_rom = false);
 		void tick();	// applies the 1-T delayed STAT write
 
 		u8 read(u16 address);

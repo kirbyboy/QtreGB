@@ -19,7 +19,7 @@ class Z80GB : public ICPURegisters
 		Z80GB(InterruptController* interrupt_controller);
 
 		void tick();
-		void reset();
+		void reset(bool boot_rom = false);
 
 		u8 read_register(RegType reg_type);
 		void write_register(RegType reg_type, u8 value);
@@ -40,6 +40,7 @@ class Z80GB : public ICPURegisters
 		bool is_end_m_cycle() const;	// m-cycle edge: m_t_cycle % 4 == 0
 		bool is_end_opcode() const;
 		bool is_interruption_time() const;
+		u16 get_pc() const { return m_pc; }
 
 		// --- Savestates / access backdoor ---
 		// Mirror of the observable registers. It is consumed in the same order

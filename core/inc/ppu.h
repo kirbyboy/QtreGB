@@ -40,7 +40,7 @@ class PPU
 		static const int XRES;
 
 		PPU(LCD *lcd);
-		void ppu_init();
+		void ppu_init(bool boot_rom = false);
 		void ppu_tick();
 		void ppu_sync_lcd_power();	// Evaluates the LCDC bit 7 change synchronously at the FF40 write, before the CPU's end-of-opcode interrupt check (mooneye stat_lyc_onoff)
 
@@ -112,6 +112,7 @@ class PPU
 		};
 
 		std::array<std::vector<OamLineEntry>, 168> m_oam_entries;
+		std::array<u8, 168> m_oam_served_count{};	// OBJ entries already served at each LX
 		std::deque<BgPixel> m_bg_pixels;
 		std::deque<ObjPixel> m_obj_pixels;
 
@@ -119,6 +120,9 @@ class PPU
 		u8 m_initial_scx_to_discard = 0;
 		u8 m_initial_scx_discarded = 0;
 		u8 m_bg_fetch_x = 0;	// pixel X inside the current BG fetch, advances 8 per tile
+		u8 m_bg_fetch_skip = 0;	// Pixels discarded from the next BG tile after a mid-line SCX low-bit change
+		u8 m_bg_prev_scx_low = 0;	// SCX low bits used by the previous BG fetch
+		u8 m_bg_line_scx_low = 0;	// SCX low bits latched for the current line (sampled at the first real B fetch)
 		u8 m_window_tile_x = 0;
 		u8 m_oam_scan_count = 0;
 		bool m_window_active = false;
@@ -132,10 +136,11 @@ class PPU
 		u8 m_sprite_high = 0;
 		u8 m_obj_fetch_wait = 0;	// Second dot of an OBJ access (2 dots per access)
 		u8 m_obj_post_wait = 0;	// Dot after the OBJ push where the FIFO still waits
-		u8 m_obj_x_total = 0;	// Sprites queued at the current X
-		u8 m_obj_fetch_seq = 0;	// Index of the sprite being fetched at the current X
-		bool m_obj_fast_fetch = false;	// Short 4-dot fetch for alternating sprites at the same X
-		u8 m_last_fetch_lx = 0xFF;	// Last LX where an OBJ fetch was started
+		u8 m_obj_penalty = 6;	// Total dots consumed by the current OBJ fetch
+		u8 m_obj_group_total = 0;	// Number of sprites in the current same-X OBJ group
+		u8 m_last_group_lx = 0xFF;	// LX of the current OBJ group
+		bool m_obj_multiple_groups = false;	// The line has sprites in more than one X group
+		std::vector<int> m_obj_considered_tiles;	// BG/window tiles already considered by an OBJ on this line
 		u16 m_sprite_data_addr = 0;
 		u8 m_sprite_pixels[8] = {};
 
@@ -151,6 +156,7 @@ class PPU
 		u8 m_bg_fetch_wait = 0;	// Second dot of a window access (6-dot window startup)
 		bool m_fetch_window = false;
 
+		bool oam_entry_pending(u8 lx) const { return m_oam_served_count[lx] < m_oam_entries[lx].size(); }
 		void pixel_transfer_tick();
 		void tick_fetcher();
 		void tick_bg_fetch();

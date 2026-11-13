@@ -58,3 +58,12 @@ u8 DMA::get_value()
 {
 	return m_value;
 }
+
+void DMA::reset()
+{
+	m_active = false;
+	m_pending = false;
+	m_byte = 0;
+	m_value = 0;
+	m_start_delay = 0;
+}

@@ -35,6 +35,11 @@ class QtreGB
 
 
 		bool load_cart(std::vector<u8> cart);
+		// Stores the boot ROM and enables it on the next reset/load_cart.
+		// The size must be exactly 0x100 bytes (DMG boot ROM).
+		bool load_boot_rom(std::vector<u8> boot_rom);
+		bool has_boot_rom() const { return m_has_boot_rom; }
+		void reset();
 
 		InterruptController m_interrupt_controller;
 		ErrorReporter m_errors;
@@ -57,6 +62,7 @@ class QtreGB
 
 	private:
 		void set_frame_ready(bool value);
+		void reset_machine();
 
 		void tick_t0();
 		void tick_t1();
@@ -66,6 +72,8 @@ class QtreGB
 
 		PhaseClock m_clock;
 		BusCpuView m_bus_cpu;
+		std::vector<u8> m_boot_rom;
+		bool m_has_boot_rom = false;
 
 };
 

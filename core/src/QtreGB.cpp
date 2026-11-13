@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 #include <cstdio>
+#include <utility>
 
 #include "QtreGB.h"
 
@@ -42,11 +43,8 @@ QtreGB::QtreGB() :
 	m_ppu.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
 	m_ppu.set_frame_callback([this](bool value){ set_frame_ready(value);});
 
-	m_cpu.reset();
-	m_timer.timer_init();
-	m_ppu.ppu_init();
 	m_timer.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
-	m_clock.reset();
+	reset_machine();
 }
 
 QtreGB::~QtreGB()
@@ -88,6 +86,13 @@ void QtreGB::tick_once()
 	if(m_errors.has_error())
 	{
 		return;
+	}
+
+	// Safety net for boot ROMs that jump to the cartridge without writing
+	// FF50: reaching 0x0100 unmaps the internal ROM as the real boot ROM does.
+	if(m_bus.is_boot_rom_enabled() && m_cpu.get_pc() >= 0x0100)
+	{
+		m_bus.disable_boot_rom();
 	}
 
 	if(m_cpu.is_end_opcode() && !m_cpu.is_interruption_time())
@@ -168,7 +173,47 @@ bool QtreGB::load_cart(vector<u8> cart)
 {
 	m_errors.clear();
 	serial.clear();
-	return m_cart.load_cart(cart) == 0;
+	if(m_cart.load_cart(cart) != 0)
+	{
+		return false;
+	}
+	reset_machine();
+	return true;
+}
+
+bool QtreGB::load_boot_rom(vector<u8> boot_rom)
+{
+	if(boot_rom.size() != 0x100)
+	{
+		return false;
+	}
+
+	m_boot_rom = std::move(boot_rom);
+	m_has_boot_rom = true;
+	return true;
+}
+
+void QtreGB::reset()
+{
+	reset_machine();
+}
+
+void QtreGB::reset_machine()
+{
+	m_errors.clear();
+	serial.clear();
+
+	if(m_has_boot_rom)
+	{
+		m_bus.set_boot_rom(m_boot_rom);
+	}
+	m_bus.set_boot_rom_enabled(m_has_boot_rom);
+	m_cpu.reset(m_has_boot_rom);
+	m_timer.timer_init();
+	m_ppu.ppu_init(m_has_boot_rom);
+	m_dma.reset();
+	m_clock.reset();
+	m_frame_ready = false;
 }
 
 bool QtreGB::get_frame_ready()

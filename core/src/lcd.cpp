@@ -4,9 +4,12 @@
 
 using namespace qtreGB;
 
-void LCD::lcd_init()
+void LCD::lcd_init(bool boot_rom)
 {
-	m_lcdc = 0x91;
+	// On DMG the LCD is off at power-on; the boot ROM enables it. Without a
+	// boot ROM the emulator starts from the usual post-boot LCDC value.
+	m_lcdc = boot_rom ? 0x00 : 0x91;
+	m_lcds = 0;
 	m_scroll_x = 0;
 	m_scroll_y = 0;
 	m_ly = 0;

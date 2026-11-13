@@ -19,8 +19,25 @@ Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Mem
 
 }
 
+void Bus::set_boot_rom(const std::vector<u8>& rom)
+{
+	const size_t count = rom.size() < m_boot_rom.size() ? rom.size() : m_boot_rom.size();
+	for(size_t i = 0; i < count; ++i)
+	{
+		m_boot_rom[i] = rom[i];
+	}
+	for(size_t i = count; i < m_boot_rom.size(); ++i)
+	{
+		m_boot_rom[i] = 0;
+	}
+}
+
 u8 Bus::read(u16 address)
 {
+	if(address < 0x100 && m_boot_rom_enabled)
+	{
+		return m_boot_rom[address];
+	}
 	if(address < 0x8000)
 	{
 		return m_cart->read(address);
@@ -144,6 +161,13 @@ void Bus::write(u16 address, u8 value)
 	}
 	else if(address < 0xFF80)
 	{
+		// BOOT: writing any value to FF50 unmaps the boot ROM on DMG.
+		if(address == 0xFF50)
+		{
+			disable_boot_rom();
+			return;
+		}
+
 		// IO
 		if(address == 0xFF00)
 		{
