@@ -62,6 +62,23 @@ class PPU
 
 		void connect_bus(IBus* bus);
 
+		// Debug-only accessors for the temp trace tools.
+		u16 debug_dots() const { return m_dots; }
+		u8 debug_lx() const { return m_lx; }
+		u8 debug_fetch_x() const { return m_bg_fetch_x; }
+		u8 debug_pushed_x() const { return m_pushed_x; }
+		int debug_fetch_phase() const { return static_cast<int>(m_fetch_phase); }
+		bool debug_fetch_window() const { return m_fetch_window; }
+		bool debug_fetching_sprite() const { return m_is_fetching_sprite; }
+		size_t debug_bg_fifo() const { return m_bg_pixels.size(); }
+		size_t debug_obj_fifo() const { return m_obj_pixels.size(); }
+		bool debug_oam_pending() const { return oam_entry_pending(m_lx); }
+		u8 debug_oam_served() const { return m_oam_served_count[m_lx]; }
+		u8 debug_oam_entries() const { return static_cast<u8>(m_oam_entries[m_lx].size()); }
+		int debug_obj_phase() const { return static_cast<int>(m_obj_fetch_phase); }
+		u8 debug_obj_wait() const { return m_obj_fetch_wait; }
+		u8 debug_post_wait() const { return m_obj_post_wait; }
+
 	private:
 		IBus *m_bus;
 		LCD *m_lcd;
@@ -123,6 +140,7 @@ class PPU
 			u8 palette_sel;	// 0 = BGP, 1 = OBP0, 2 = OBP1
 			bool window;
 			u8 out_delay;	// Cumulative x_extra output delay before this pixel
+			u8 obj_delay;	// Per-sprite OBJ palette delay
 		};
 
 		std::deque<BgPixel> m_bg_pixels;
@@ -176,11 +194,16 @@ class PPU
 		u8 m_fetch_low = 0;
 		u8 m_fetch_high = 0;
 		u8 m_bg_fetch_wait = 0;	// Second dot of a window access (6-dot window startup)
+		u8 m_scx_latch_dot = 89;	// Dot where SCX low bits are latched
+		u8 m_win_startup_wait = 3;
+		u8 m_win_midline_wait = 2;
+		u8 m_win_startup_lx = 11;
 		bool m_fetch_window = false;
 
 		bool oam_entry_pending(u8 lx) const { return m_oam_served_count[lx] < m_oam_entries[lx].size(); }
 		void pixel_transfer_tick();
 		void tick_fetcher();
+		void handle_bg_push();
 		void tick_bg_fetch();
 		void tick_obj_fetch();
 		void push_bg_tile();

@@ -1,3 +1,5 @@
+#include <cstdlib>
+
 #include "ppu.h"
 #include "QtreGB.h"
 #include "lcd.h"
@@ -45,6 +47,10 @@ m_oam_ram(vector<OAMEntry>(40))
 	m_bg_palette_delay = 6;
 	m_win_palette_delay = 0;
 	m_obj_palette_delay = 0;
+	if(const char* e = std::getenv("QTR_WINWAIT_START")) m_win_startup_wait = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_WINWAIT_MID")) m_win_midline_wait = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_WINWAIT_LX")) m_win_startup_lx = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_SCXLATCH")) m_scx_latch_dot = static_cast<u8>(std::atoi(e));
 }
 
 void PPU::ppu_init(bool boot_rom)
@@ -359,6 +365,10 @@ void PPU::ppu_mode_oam()
 
 void PPU::ppu_mode_hblank()
 {
+	// Finish the palette pipeline with its natural delay: the last pixels of
+	// the line are written during hblank, after any late BGP restore.
+	flush_pending_palette(false);
+
 	// The OAM STAT IRQ is signalled at dot 452 on DMG.
 	if(m_dots == 452 && m_lcd->m_ly != PPU::YRES)
 	{
@@ -669,6 +679,7 @@ void PPU::update_stat_irq()
 
 void PPU::pixel_transfer_tick()
 {
+
 	// m_lx is X + 8 and must stay in [0, 168). If the mode was changed
 	// externally, do not index m_oam_entries out of bounds.
 	if(m_lx >= 168)
@@ -684,7 +695,7 @@ void PPU::pixel_transfer_tick()
 	// SCX's low 3 bits are sampled once per line at the start of the first
 	// real B fetch (see mealybug m3_scx_low_3_bits). A write after this dot
 	// still changes the tilemap address but not the sub-tile alignment.
-	if(m_dots == 89)
+	if(m_dots == m_scx_latch_dot)
 	{
 		m_bg_line_scx_low = static_cast<u8>(m_lcd->m_scroll_x % 8);
 	}
@@ -882,7 +893,7 @@ void PPU::pixel_transfer_tick()
 		m_bg_pixels.clear();
 		m_fetch_phase = FetchPhase::BgTilemap;
 		m_fetch_window = true;
-		m_bg_fetch_wait = (m_lx <= 11) ? 3 : 2;
+		m_bg_fetch_wait = (m_lx <= m_win_startup_lx) ? m_win_startup_wait : m_win_midline_wait;
 		m_window_activating = false;
 		return;
 	}
@@ -979,9 +990,9 @@ void PPU::pixel_transfer_tick()
 			const BgPixel bg = m_bg_pixels.front();
 			m_bg_pixels.pop_front();
 
-			// DMG: the PPU sees LCDC/BGP delayed by 1 T-cycle. LX == 8 is the
-			// documented exception for LCDC.
-			const u8 lcdc = m_lcd->m_lcdc;
+			// DMG: the PPU sees LCDC delayed by one T-cycle at pixel output.
+			// LX == 8 is the documented exception: the current value is used.
+			const u8 lcdc = (m_lx == 8) ? m_lcd->m_lcdc : m_last_lcdc;
 			const bool bg_enable = (lcdc & 0x01) != 0;
 			const bool obj_enable = (lcdc & 0x02) != 0;
 			const u8 bgp = m_lcd->m_bg_palette;
@@ -990,6 +1001,7 @@ void PPU::pixel_transfer_tick()
 			u8 color_index = bg_color_index;
 			u8 palette_sel = 0;	// BGP
 			bool use_window = bg.window;
+			u8 obj_delay = 0;
 
 			if(obj_enable && !m_obj_pixels.empty())
 			{
@@ -1000,12 +1012,13 @@ void PPU::pixel_transfer_tick()
 				{
 					color_index = obj.color_index;
 					palette_sel = obj.palette ? 2 : 1;	// OBP1 / OBP0
+					obj_delay = ((obj.x & 0x07) >= 6) ? 1 : 0;
 				}
 			}
 
 			m_pending_palette_pixels.push_back(PendingPalettePixel{
 				static_cast<u16>(m_dots), static_cast<u8>(m_pushed_x), m_lcd->m_ly,
-				color_index, palette_sel, use_window, m_line_obj_out_delay});
+				color_index, palette_sel, use_window, m_line_obj_out_delay, obj_delay});
 			flush_pending_palette(false);
 
 			m_pushed_x++;
@@ -1049,7 +1062,8 @@ void PPU::flush_pending_palette(bool all)
 		const u8 win_delay = m_wx0_line0_window ? m_bg_palette_delay : m_win_palette_delay;
 		const u8 bg_delay = it->out_delay >= m_bg_palette_delay ? 0
 			: static_cast<u8>(m_bg_palette_delay - it->out_delay);
-		const u8 delay = it->palette_sel != 0 ? m_obj_palette_delay
+		const u8 obj_delay = static_cast<u8>(m_obj_palette_delay + it->obj_delay);
+		const u8 delay = it->palette_sel != 0 ? obj_delay
 			: (it->window ? win_delay : bg_delay);
 		if(!all && static_cast<u16>(m_dots - it->dot) < delay)
 		{
@@ -1071,7 +1085,7 @@ void PPU::flush_pending_palette(bool all)
 
 void PPU::finish_pixel_transfer()
 {
-	flush_pending_palette(true);
+	flush_pending_palette(false);
 	if(m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
 	{
 		m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
@@ -1093,21 +1107,28 @@ void PPU::tick_fetcher()
 	if(m_is_fetching_sprite)
 	{
 		tick_obj_fetch();
+		return;
 	}
-	else
-	{
-		tick_bg_fetch();
-	}
-}
 
-void PPU::tick_bg_fetch()
-{
+	// Consume the access wait here so the push stage runs one dot after the
+	// last fetch access, matching the hardware fetch cadence. Without this
+	// the push would land on the same tick the wait reaches zero and the
+	// window's first fetch would be one dot short.
 	if(m_bg_fetch_wait > 0)
 	{
 		--m_bg_fetch_wait;
 		return;
 	}
 
+	// The BG/window fetcher advances independently of the FIFO. The push
+	// stage below decides when the ready tile enters the FIFO and when an
+	// OBJ interrupts the fetch.
+	tick_bg_fetch();
+	handle_bg_push();
+}
+
+void PPU::tick_bg_fetch()
+{
 	if(m_fetch_phase == FetchPhase::BgTilemap)
 	{
 		if(m_fetch_window && m_window_active)
@@ -1197,44 +1218,51 @@ void PPU::tick_bg_fetch()
 		return;
 	}
 
-	if(m_fetch_phase == FetchPhase::BgPush)
+	(void)0;
+}
+
+void PPU::handle_bg_push()
+{
+	if(m_fetch_phase != FetchPhase::BgPush)
 	{
-		if(m_bg_pixels.empty())
-		{
-			// Window reactivation zero pixel: if the window was eligible at
-			// some point this frame and this push lands on the current WX,
-			// push a zero pixel instead of the fetched tile (DMG glitch).
-			// The first window tile after activation is the exception.
-			if(m_window_active_for_frame &&
-			   m_lx == m_lcd->m_win_x && !m_window_just_activated)
-			{
-				m_bg_pixels.push_back(BgPixel{0});
-				return;
-			}
+		return;
+	}
+	if(m_bg_fetch_wait > 0)
+	{
+		return;
+	}
 
-			// Push the cached tile and move on. Do not start an OBJ on this
-			// tick: the BG fetcher first fetches the next tile, and the OBJ
-			// is served at that next push phase.
-			push_bg_tile();
-			m_fetch_phase = FetchPhase::BgTilemap;
-			m_bg_fetch_x = static_cast<u8>(m_bg_fetch_x + 8);
-			if(m_window_just_activated)
-			{
-				// The first window tile fetch takes 6 dots: start the next
-				// tilemap access in the same tick as the push.
-				m_window_just_activated = false;
-				tick_bg_fetch();
-			}
+	if(m_bg_pixels.empty())
+	{
+		// Window reactivation zero pixel: if the window was eligible at
+		// some point this frame and this push lands on the current WX,
+		// push a zero pixel instead of the fetched tile (DMG glitch).
+		// The first window tile after activation is the exception.
+		if(m_window_active_for_frame &&
+		   m_lx == m_lcd->m_win_x && !m_window_just_activated)
+		{
+			m_bg_pixels.push_back(BgPixel{0});
 			return;
 		}
 
-		// FIFO not empty: if an OBJ is pending, cache the BG tile and start
-		// the object fetch. The cached tile is pushed after the group.
-		if(m_lcd->get_lcdc_obj_enable() && m_lx < 168 && oam_entry_pending(m_lx))
+		push_bg_tile();
+		m_fetch_phase = FetchPhase::BgTilemap;
+		m_bg_fetch_x = static_cast<u8>(m_bg_fetch_x + 8);
+		if(m_window_just_activated)
 		{
-			start_sprite_fetch();
-			return;
+			// The first window tile fetch takes 6 dots: start the next
+			// tilemap access in the same tick as the push.
+			m_window_just_activated = false;
+			tick_bg_fetch();
 		}
+		return;
+	}
+
+	// FIFO not empty: if an OBJ is pending, start the object fetch. The
+	// BG tile stays cached and is pushed after the group.
+	if(m_lcd->get_lcdc_obj_enable() && m_lx < 168 && oam_entry_pending(m_lx))
+	{
+		start_sprite_fetch();
 	}
 }
 
@@ -1395,9 +1423,22 @@ void PPU::tick_obj_fetch()
 		// tile fetch with the point where SCX is sampled. The CPU-visible
 		// mode 0 is handled by the per-line dot budget, so this visual phase
 		// shift does not affect the sprite timing test.
-		m_obj_post_wait = (m_obj_group_total == 1 && m_sprite_entry.entry.m_x != 0 &&
-			!m_lcd->get_lcdc_win_enable()) ? 6 : 0;
-		m_line_obj_out_delay = static_cast<u8>(m_line_obj_out_delay + m_obj_post_wait);
+		int x_extra = 6;
+		if(const char* env = std::getenv("QTR_XEXTRA")) x_extra = std::atoi(env);
+		int x0_extra = 4;
+		if(const char* env = std::getenv("QTR_X0WAIT")) x0_extra = std::atoi(env);
+		u8 post_wait = 0;
+		if(m_obj_group_total == 1 && !m_lcd->get_lcdc_win_enable())
+		{
+			post_wait = m_sprite_entry.entry.m_x != 0
+				? static_cast<u8>(x_extra) : static_cast<u8>(x0_extra);
+		}
+		m_obj_post_wait = post_wait;
+		// Sprites starting at screen x=-2/-1 stall the visible output one
+		// dot less than the generic lone-sprite case.
+		const u8 out_delay = (m_obj_post_wait == 6 &&
+			((m_sprite_entry.entry.m_x & 0x07) >= 6)) ? 5 : m_obj_post_wait;
+		m_line_obj_out_delay = static_cast<u8>(m_line_obj_out_delay + out_delay);
 	}
 }
 
