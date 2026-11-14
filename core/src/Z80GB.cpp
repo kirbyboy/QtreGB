@@ -2585,18 +2585,19 @@ void Z80GB::execute()
 			m_t_cycle = 1;
 		}
 
-		// If interruptions are enabled
+		// Interrupt acceptance at the instruction boundary. The STAT sources
+		// carry their own delivery phase, so IF is sampled here before the PPU
+		// ticks the current T-cycle (this is the boundary the hardware uses;
+		// a same-tick PPU edge is seen at the next instruction boundary).
 		if(m_end_opcode && m_ime)
 		{
-			if(((m_if & static_cast<u8>(InterruptType::IT_VBLANK)) && m_ie & static_cast<u8>(InterruptType::IT_VBLANK)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_LCD_STAT)) && m_ie & static_cast<u8>(InterruptType::IT_LCD_STAT)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_TIMER)) && m_ie & static_cast<u8>(InterruptType::IT_TIMER)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_SERIAL)) && m_ie & static_cast<u8>(InterruptType::IT_SERIAL)) ||
-			   ((m_if & static_cast<u8>(InterruptType::IT_JOYPAD)) && m_ie & static_cast<u8>(InterruptType::IT_JOYPAD))
-			)
+			if((m_if & m_ie & static_cast<u8>(InterruptType::IT_VBLANK)) != 0 ||
+			   (m_if & m_ie & static_cast<u8>(InterruptType::IT_LCD_STAT)) != 0 ||
+			   (m_if & m_ie & static_cast<u8>(InterruptType::IT_TIMER)) != 0 ||
+			   (m_if & m_ie & static_cast<u8>(InterruptType::IT_SERIAL)) != 0 ||
+			   (m_if & m_ie & static_cast<u8>(InterruptType::IT_JOYPAD)) != 0)
 			{
 				m_is_halted = false;
-				//m_halt_bug = false;
 				m_is_interruption_time = true;
 				m_ime = false;
 				m_m_cycle = 1;

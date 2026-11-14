@@ -195,6 +195,11 @@ class PPU
 		u8 m_fetch_high = 0;
 		u8 m_bg_fetch_wait = 0;	// Second dot of a window access (6-dot window startup)
 		u8 m_scx_latch_dot = 89;	// Dot where SCX low bits are latched
+		u16 m_hblank_irq_lx = 163;
+		u16 m_vblank_quirk_dot = 454;
+		u16 m_vblank_irq_dot = 453;
+		u16 m_mode0_lx = 167;
+		u16 m_mode0_budget = 252;
 		u8 m_win_startup_wait = 3;
 		u8 m_win_midline_wait = 2;
 		u8 m_win_startup_lx = 11;
@@ -236,6 +241,20 @@ class PPU
 		bool m_stat_irq_line = false;	// Internal STAT IRQ line (latched), cleared on entering mode 3
 		bool m_pending_stat_irq = false;	// STAT IRQ edge seen last dot; raised on the next dot (1-T delay)
 		bool m_last_stat_irq = false;	// Previous dot's STAT IRQ condition (edge detection)
+		bool m_stat_model = true;	// Unified STAT line model (QTR_STATMODEL=0 disables)
+		bool m_oam_line = false;	// OAM condition latch held until mode 3 entry
+		bool m_vblank_oam_pulse = false;	// One-tick OAM pulse for the DMG VBlank quirk
+		bool m_hblank_line = false;	// HBlank STAT condition latched at lx=165
+		u8 m_stat_delay_lyc = 0;
+		u8 m_stat_delay_oam = 1;
+		u8 m_stat_delay_vblank = 1;
+		u8 m_stat_delay_hblank = 0;
+		u8 m_stat_deliver_countdown = 0;
+		bool m_stat_deliver_pending = false;
+		bool m_stat_prev_lyc = false;
+		bool m_stat_prev_oam = false;
+		bool m_stat_prev_vblank = false;
+		bool m_stat_prev_hblank = false;
 		bool m_enable_lyc_eq_ly_irq = true;	// LYC IRQ disabled at dot 453 and last VBlank line 2..6
 		bool m_vblank_last_line = false;	// True while the PPU is on VBlank line 153 (LY is 0 from dot 2 on)
 		void update_stat_irq();	// Update STAT IRQ with edge detection (LCD-on special schedule)

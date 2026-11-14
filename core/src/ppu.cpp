@@ -51,6 +51,16 @@ m_oam_ram(vector<OAMEntry>(40))
 	if(const char* e = std::getenv("QTR_WINWAIT_MID")) m_win_midline_wait = static_cast<u8>(std::atoi(e));
 	if(const char* e = std::getenv("QTR_WINWAIT_LX")) m_win_startup_lx = static_cast<u8>(std::atoi(e));
 	if(const char* e = std::getenv("QTR_SCXLATCH")) m_scx_latch_dot = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_HBLANKIRQ")) m_hblank_irq_lx = static_cast<u16>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_MODE0LX")) m_mode0_lx = static_cast<u16>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_VBLANKQUIRKDOT")) m_vblank_quirk_dot = static_cast<u16>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_VBLANKIRQDOT")) m_vblank_irq_dot = static_cast<u16>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_SDLYC")) m_stat_delay_lyc = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_SDOAM")) m_stat_delay_oam = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_SDVBLANK")) m_stat_delay_vblank = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_SDHBLANK")) m_stat_delay_hblank = static_cast<u8>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_MODE0BUDGET")) m_mode0_budget = static_cast<u16>(std::atoi(e));
+	if(const char* e = std::getenv("QTR_STATMODEL")) m_stat_model = std::atoi(e) != 0;
 }
 
 void PPU::ppu_init(bool boot_rom)
@@ -82,6 +92,7 @@ void PPU::ppu_init(bool boot_rom)
 	m_lyc_update_countdown = 0;
 	m_last_stat_irq = false;
 	m_pending_stat_irq = false;
+	m_hblank_line = false;
 	m_enable_lyc_eq_ly_irq = true;
 	m_vblank_last_line = false;
 
@@ -255,6 +266,8 @@ void PPU::ppu_power_off()
 	m_last_stat_irq = false;
 	m_pending_stat_irq = false;
 	m_stat_irq_line = false;
+	m_oam_line = false;
+	m_hblank_line = false;
 	m_enable_lyc_eq_ly_irq = true;
 	m_vblank_last_line = false;
 	m_oam_bus.reset();
@@ -344,6 +357,7 @@ void PPU::ppu_mode_oam()
 		{
 			m_stat_irq_line = false;
 		}
+		m_oam_line = false;
 
 		m_pushed_x = 0;
 		m_lx = 0;
@@ -393,6 +407,7 @@ void PPU::ppu_mode_hblank()
 		// The STAT mode changes one dot before the line ends (LY advances at 453).
 		m_enable_lyc_eq_ly_irq = true;
 
+		m_hblank_line = false;
 		if(m_lcd->m_ly == PPU::YRES)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_VBLANK);
@@ -402,12 +417,24 @@ void PPU::ppu_mode_hblank()
 			m_lcd->set_lcds_mode(LCDMode::MODE_OAM);
 		}
 
-		// DMG quirk: the OAM source is also signalled when VBlank starts,
-		// at the same time as the VBlank interrupt.
-		if(m_lcd->m_ly == PPU::YRES)
+	}
+	if(m_dots == m_vblank_quirk_dot && m_lcd->m_ly == PPU::YRES)
+	{
+		// DMG quirk: one-tick OAM pulse at VBlank start.
+		if(m_stat_model)
+		{
+			m_vblank_oam_pulse = true;
+		}
+		else
 		{
 			update_stat_irq_for_oam_mode();
 		}
+	}
+	else if(m_dots == m_vblank_irq_dot && m_lcd->m_ly == PPU::YRES)
+	{
+		request_interrupt(InterruptType::IT_VBLANK);
+		update_stat_irq();
+		update_stat_irq();
 	}
 	else if(m_dots == PPU::TICKS_PER_LINE - 1)
 	{
@@ -416,9 +443,6 @@ void PPU::ppu_mode_hblank()
 			m_tick_selector = &PPU::ppu_mode_vblank;
 			m_vblank_last_line = false;
 			m_oam_bus.release(VideoDevice::Ppu, VideoAccess::Read);
-			request_interrupt(InterruptType::IT_VBLANK);
-			update_stat_irq();
-			update_stat_irq();
 		}
 		else
 		{
@@ -628,7 +652,22 @@ void PPU::set_lyc_flag(bool ly_equals_lyc)
 	// without firing when the result does not change (stat_lyc_onoff).
 	if(ly_equals_lyc && !previous)
 	{
-		update_stat_irq();
+		if(m_stat_model && m_lcd_on_line != 255)
+		{
+			// During the LCD-on startup lines the regular per-dot STAT
+			// evaluation is bypassed, so the LYC 0->1 edge produced while
+			// the LCD is switched on must be delivered synchronously
+			// (stat_lyc_onoff round 4).
+			if(m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && !m_stat_irq_line)
+			{
+				m_stat_irq_line = true;
+				request_interrupt(InterruptType::IT_LCD_STAT);
+			}
+		}
+		else
+		{
+			update_stat_irq();
+		}
 	}
 }
 
@@ -647,6 +686,10 @@ void PPU::request_interrupt(InterruptType IType)
 
 void PPU::update_stat_irq()
 {
+	if(m_stat_model)
+	{
+		return;
+	}
 	bool match = false;
 	LCDMode mode = m_lcd->get_lcds_mode();
 	// Check conditions in priority order? The hardware checks all enabled conditions
@@ -939,13 +982,22 @@ void PPU::pixel_transfer_tick()
 	bool discard_done = false;
 	const u8 lx_before = m_lx;
 
+	// The HBlank STAT condition is asserted one M-cycle before the visible
+	// mode switch (SM8: the IRQ is raised at lx=165 while STAT still reads
+	// mode 3 until lx=167). Keep the CPU-visible mode transition separate.
+	if(lx_before == 165 && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK))
+	{
+		m_hblank_line = true;
+	}
+
 	// Expose mode 0 at the CPU-visible dot budget: base 252 plus the OBJ
 	// penalties of the line. The framebuffer keeps receiving pixels after
 	// this point; only the STAT mode switches.
 	if(m_mode0_penalty_dots == 0)
 	{
 		// No OBJ on this line: use the validated end-of-line phase.
-		if(m_lx == 167 && !oam_entry_pending(167) && !m_is_fetching_sprite &&
+		if(m_lx == static_cast<u8>(m_mode0_lx) &&
+		   !oam_entry_pending(static_cast<u8>(m_mode0_lx)) && !m_is_fetching_sprite &&
 		   m_obj_post_wait == 0 && m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
 		{
 			m_lcd->set_lcds_mode(LCDMode::MODE_HBLANK);
@@ -953,7 +1005,7 @@ void PPU::pixel_transfer_tick()
 	}
 	else
 	{
-		const u16 mode0_dot = static_cast<u16>(252 + m_mode0_penalty_dots -
+		const u16 mode0_dot = static_cast<u16>(m_mode0_budget + m_mode0_penalty_dots -
 			(m_mode0_penalty_dots != 0 ? 1 : 0) - m_mode0_extra_correction);
 		if(m_dots >= mode0_dot && !oam_entry_pending(167) && !m_is_fetching_sprite &&
 		   m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)
@@ -1043,7 +1095,7 @@ void PPU::pixel_transfer_tick()
 
 	// The STAT mode 0 interrupt is raised one M-cycle before the actual mode
 	// switch; this is what the CPU measures in intr_2_0_timing.
-	if(lx_before == 165 && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && !m_stat_irq_line)
+	if(!m_stat_model && lx_before == static_cast<u8>(m_hblank_irq_lx) && m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) && !m_stat_irq_line)
 	{
 		m_stat_irq_line = true;
 		request_interrupt(InterruptType::IT_LCD_STAT);
@@ -1500,6 +1552,74 @@ void PPU::update_delayed_registers()
 
 void PPU::raise_stat_irq()
 {
+	if(m_stat_model)
+	{
+		const LCDMode mode = m_lcd->get_lcds_mode();
+		const bool lyc = m_enable_lyc_eq_ly_irq &&
+			m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && (m_last_lyc == m_last_ly);
+		const bool oam = m_lcd->get_lcds_stat_int(StatSRC::SS_OAM) &&
+			(m_oam_line || m_vblank_oam_pulse || mode == LCDMode::MODE_OAM);
+		const bool vblank = m_lcd->get_lcds_stat_int(StatSRC::SS_VBLANK) &&
+			mode == LCDMode::MODE_VBLANK;
+		const bool hblank = m_lcd->get_lcds_stat_int(StatSRC::SS_HBLANK) &&
+			m_hblank_line;
+		const bool level = lyc || oam || vblank || hblank;
+
+		// Deliver a previously scheduled edge with its per-source phase.
+		if(m_stat_deliver_pending)
+		{
+			if(m_stat_deliver_countdown > 0)
+			{
+				--m_stat_deliver_countdown;
+			}
+			if(m_stat_deliver_countdown == 0)
+			{
+				request_interrupt(InterruptType::IT_LCD_STAT);
+				m_stat_deliver_pending = false;
+			}
+		}
+
+		if(level && !m_stat_irq_line)
+		{
+			u8 delay = 0;
+			if(lyc && !m_stat_prev_lyc)
+			{
+				delay = m_stat_delay_lyc;
+			}
+			else if(oam && !m_stat_prev_oam)
+			{
+				delay = m_stat_delay_oam;
+			}
+			else if(vblank && !m_stat_prev_vblank)
+			{
+				delay = m_stat_delay_vblank;
+			}
+			else if(hblank && !m_stat_prev_hblank)
+			{
+				delay = m_stat_delay_hblank;
+			}
+
+			if(delay == 0)
+			{
+				request_interrupt(InterruptType::IT_LCD_STAT);
+			}
+			else
+			{
+				m_stat_deliver_countdown = delay;
+				m_stat_deliver_pending = true;
+			}
+		}
+
+		m_stat_irq_line = level;
+		m_stat_prev_lyc = lyc;
+		m_stat_prev_oam = oam;
+		m_stat_prev_vblank = vblank;
+		m_stat_prev_hblank = hblank;
+		m_last_stat_irq = level;
+		m_vblank_oam_pulse = false;
+		m_pending_stat_irq = false;
+		return;
+	}
 	const bool lyc_eq_ly = m_enable_lyc_eq_ly_irq && (m_last_lyc == m_last_ly);
 
 	const bool lyc_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && lyc_eq_ly;
@@ -1531,6 +1651,11 @@ void PPU::raise_stat_irq()
 
 void PPU::update_stat_irq_for_oam_mode()
 {
+	if(m_stat_model)
+	{
+		m_oam_line = true;
+		return;
+	}
 	const bool lyc_eq_ly_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) && (m_last_lyc == m_last_ly);
 	const bool lyc_eq_next_ly_irq = m_lcd->get_lcds_stat_int(StatSRC::SS_LYC) &&
 		(m_last_lyc == static_cast<u8>(m_last_ly + 1));
