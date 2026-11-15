@@ -190,7 +190,6 @@ class PPU
 		u16 m_fetch_tilemap_addr = 0;
 		u16 m_fetch_data_addr = 0;
 		u8 m_fetch_tile_number = 0;
-		u8 m_fetch_tile_y = 0;	// Tile row latched at the tilemap fetch
 		u8 m_fetch_low = 0;
 		u8 m_fetch_high = 0;
 		u8 m_bg_fetch_wait = 0;	// Second dot of a window access (6-dot window startup)

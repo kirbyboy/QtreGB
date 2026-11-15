@@ -957,8 +957,10 @@ void PPU::pixel_transfer_tick()
 			m_wx0_write_pending = false;
 			m_wx0_line0_window = true;
 		}
+		// WX=0 activates the window one T-cycle later when SCX has a
+		// non-zero sub-tile offset (mealybug m3_window_timing_wx_0).
 		m_window_activation_delay =
-			(m_pixel_transfer_phase == PixelTransferPhase::Discard && m_last_wx == 0) ? 1 : 0;
+			(m_last_wx == 0 && (m_lcd->m_scroll_x & 0x07) != 0) ? 1 : 0;
 		return;
 	}
 
@@ -1055,12 +1057,16 @@ void PPU::pixel_transfer_tick()
 			bool use_window = bg.window;
 			u8 obj_delay = 0;
 
-			if(obj_enable && !m_obj_pixels.empty())
+			// The OBJ FIFO advances in lockstep with the BG pixel output, even
+			// while the LCDC OBJ enable bit is off. Only the drawing is gated
+			// by the enable bit; leaving stale pixels in the FIFO would emit
+			// them much later in the line (mealybug m3_lcdc_obj_en_change).
+			if(!m_obj_pixels.empty())
 			{
 				const ObjPixel obj = m_obj_pixels.front();
 				m_obj_pixels.pop_front();
 
-				if(obj.color_index != 0 && (!obj.priority || bg_color_index == 0))
+				if(obj_enable && obj.color_index != 0 && (!obj.priority || bg_color_index == 0))
 				{
 					color_index = obj.color_index;
 					palette_sel = obj.palette ? 2 : 1;	// OBP1 / OBP0
@@ -1227,12 +1233,10 @@ void PPU::tick_bg_fetch()
 			m_bg_fetch_wait = 1;
 		}
 
-		// Latch the tile row with the tile number. The LCDC data area is
-		// still sampled at the low-byte access, matching the tile-select
-		// change tests.
-		m_fetch_tile_y = (m_fetch_window && m_window_active)
-			? static_cast<u8>(m_window_line % 8)
-			: static_cast<u8>((m_lcd->m_ly + m_lcd->m_scroll_y) % 8);
+		// The tile row and the LCDC data area are sampled separately at each
+		// byte access. On DMG a mid-fetch SCY or tile-select change can
+		// therefore desync the low and high bitplanes (mealybug
+		// m3_scy_change / m3_lcdc_tile_sel_change).
 		m_fetch_phase = FetchPhase::BgLow;
 		m_bg_fetch_wait = 1;
 		return;
@@ -1244,7 +1248,10 @@ void PPU::tick_bg_fetch()
 		const u16 tile_data = (tile_base == 0x8800)
 			? static_cast<u16>(0x9000 + static_cast<int8_t>(m_fetch_tile_number) * 16)
 			: static_cast<u16>(0x8000 + m_fetch_tile_number * 16);
-		m_fetch_data_addr = static_cast<u16>(tile_data + m_fetch_tile_y * 2);
+		const u8 tile_y = (m_fetch_window && m_window_active)
+			? static_cast<u8>(m_window_line % 8)
+			: static_cast<u8>((m_lcd->m_ly + m_lcd->m_scroll_y) % 8);
+		m_fetch_data_addr = static_cast<u16>(tile_data + tile_y * 2);
 		m_fetch_low = m_bus->read(m_fetch_data_addr);
 		m_fetch_phase = FetchPhase::BgHigh;
 		m_bg_fetch_wait = 1;
@@ -1262,7 +1269,7 @@ void PPU::tick_bg_fetch()
 			: static_cast<u16>(0x8000 + m_fetch_tile_number * 16);
 		const u8 tile_y = (m_fetch_window && m_window_active)
 			? static_cast<u8>(m_window_line % 8)
-			: m_fetch_tile_y;
+			: static_cast<u8>((m_lcd->m_ly + m_lcd->m_scroll_y) % 8);
 		m_fetch_data_addr = static_cast<u16>(tile_data + tile_y * 2);
 		m_fetch_high = m_bus->read(m_fetch_data_addr + 1);
 		m_fetch_phase = FetchPhase::BgPush;
