@@ -6,11 +6,6 @@ WARN := -std=c++17 -fdiagnostics-color=always -Wall -Wextra -Wpedantic
 
 ifeq ($(QTR_CPU_MICRO),1)
 WARN += -DQTR_CPU_MICRO
-QTR_PPU_FULL ?= 1
-endif
-
-ifeq ($(QTR_PPU_FULL),1)
-WARN += -DQTR_PPU_FULL
 endif
 
 ifeq ($(QTR_CPU_WRITE_T3),1)

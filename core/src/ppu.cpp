@@ -5,8 +5,6 @@
 #include "QtreGB.h"
 #include "lcd.h"
 
-#ifndef QTR_PPU_FULL
-
 using namespace qtreGB;
 using namespace std;
 
@@ -1869,4 +1867,3 @@ void PPULegacy::update_stat_irq_for_oam_mode()
 		m_last_stat_irq = irq;
 	}
 }
-#endif // QTR_PPU_FULL

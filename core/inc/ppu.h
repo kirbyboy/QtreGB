@@ -338,16 +338,8 @@ class PPULegacy
 
 } // namespace qtreGB
 
-#ifdef QTR_PPU_FULL
-#include "ppu_full.h"
-#endif
-
 namespace qtreGB
 {
-#ifdef QTR_PPU_FULL
-using PPU = PPUFull;
-#else
 using PPU = PPULegacy;
-#endif
 } // namespace qtreGB
 #endif
