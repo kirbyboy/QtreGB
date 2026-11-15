@@ -1,6 +1,9 @@
 #ifndef QTREGB_BUS_H
 #define QTREGB_BUS_H
 
+#include <array>
+#include <vector>
+
 #include "types.h"
 #include "ibus.h"
 #include "cart.h"
@@ -28,7 +31,14 @@ class Bus : public IBus
 		u8 read(u16 address) override;
 		void write(u16 address, u8 value) override;
 
+		void set_boot_rom(const std::vector<u8>& rom);
+		void set_boot_rom_enabled(bool enabled) { m_boot_rom_enabled = enabled; }
+		bool is_boot_rom_enabled() const { return m_boot_rom_enabled; }
+		void disable_boot_rom() { m_boot_rom_enabled = false; }
+
 	private:
+		std::array<u8, 0x100> m_boot_rom{};
+		bool m_boot_rom_enabled = false;
 		Cart *m_cart;
 		Timer *m_timer;
 		DMA *m_dma;

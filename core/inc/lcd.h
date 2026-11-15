@@ -2,8 +2,6 @@
 #define QTREGB_LCD_H
 
 #include "types.h"
-#include "tagged_serializer.h"
-#include "ifetcher_regs.h"
 
 namespace qtreGB
 {
@@ -24,10 +22,12 @@ enum class StatSRC:u8
 	SS_LYC = (1 << 6)
 };
 
-class LCD : public IFetcherRegs
+class LCD
 {
 	public:
-		void lcd_init();
+		void lcd_init(bool boot_rom = false);
+		void tick();	// applies the 1-T delayed STAT write
+		void apply_delayed_writes();
 
 		u8 read(u16 address);
 		void write(u16 address, u8 value);
@@ -43,13 +43,13 @@ class LCD : public IFetcherRegs
 		6 - Window tile map area: 0 = 9800–9BFF; 1 = 9C00–9FFF
 		7 - LCD & PPU enable: 0 = Off; 1 = On
 		*/
-		bool get_lcdc_bgw_enable() const override;
-		bool get_lcdc_obj_enable() const override;
-		u8 get_lcdc_obj_height() const override;
-		u16 get_lcdc_bg_map_area() const override;
-		u16 get_lcdc_bgw_data_area() const override;
-		bool get_lcdc_win_enable() const override;
-		u16 get_lcdc_win_map_area() const override;
+		bool get_lcdc_bgw_enable();
+		bool get_lcdc_obj_enable();
+		u8 get_lcdc_obj_height();
+		u16 get_lcdc_bg_map_area();
+		u16 get_lcdc_bgw_data_area();
+		bool get_lcdc_win_enable();
+		u16 get_lcdc_win_map_area();
 		bool get_lcdc_lcd_enable();
 
 		/*
@@ -67,37 +67,6 @@ class LCD : public IFetcherRegs
 		void set_lcds_lyc(bool value);
 		bool get_lcds_stat_int(StatSRC stat);	// gets the source interruption for STAT type interruption
 
-		// Raw register values: the register file owns the storage, callers read it through
-		// these accessors instead of reaching into the fields. LY is an output produced by
-		// the PPU (the register file only mirrors it), hence set_ly().
-		u8 get_lcdc() const override;
-		u8 get_ly() const override;
-		u8 get_lyc();
-		u8 get_scroll_x() const override;
-		u8 get_scroll_y() const override;
-		u8 get_win_x() const override;
-		u8 get_win_y() const override;
-		u8 get_bg_palette() const override;
-		u8 get_obj_palette_0() const override;
-		u8 get_obj_palette_1() const override;
-		void set_ly(u8 value);
-
-		// --- Savestates / access backdoor ---
-		// Mirror of the register file. The tags are consumed in the same order as
-		// LCD::serialize, so a State snapshot works as a prefix: writing to State and
-		// serializing it injects the raw values (bypassing the write() masking rules).
-		struct State
-		{
-			u8 lcdc, lcds, scroll_y, scroll_x, ly, lyc;
-			u8 bg_palette, obj_palette_0, obj_palette_1;
-			u8 win_y, win_x;
-
-			void serialize(TaggedSerializer& s);
-		};
-
-		void serialize(TaggedSerializer& s);
-
-	private:
 		//registers
 		u8 m_lcdc;	// FF40 — LCDC: LCD control
 		u8 m_lcds = 0;	// FF41 — STAT: LCD status
@@ -110,6 +79,14 @@ class LCD : public IFetcherRegs
 		u8 m_obj_palette_1;	// FF49 — OBP1: OBJ palette 1 data
 		u8 m_win_y;	// FF4A — WY: Window Y position
 		u8 m_win_x;	// FF4B — WX: Window X position plus 7
+		u8 m_pending_stat = 0;	// 1 while a STAT write waits for the next T-cycle
+		u8 m_pending_stat_value = 0;
+		struct DelayedWrite { u8 address; u8 value; u8 countdown; };
+		DelayedWrite m_delayed_writes[8] {};
+		u8 m_delayed_write_count = 0;
+		u8 m_ppu_write_delay = 0;
+		u8 m_reg_write_delay[12] {};
+		u8 m_bgp_write_delay_ly0 = 0xFF;
 };
 
 

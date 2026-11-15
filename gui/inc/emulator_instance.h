@@ -49,6 +49,11 @@ class EmulatorInstance
 		bool is_button_pressed(u8 button) const;
 
 		void load_cart(std::vector<u8> cart);
+		// Stores a boot ROM. It is applied on the next load_cart()/reset().
+		bool load_boot_rom(std::vector<u8> boot_rom);
+		void reset();
+		bool has_boot_rom() const { return !m_boot_rom.empty(); }
+		bool boot_rom_active() const { return m_emulator->has_boot_rom(); }
 		void tick();
 		bool get_frame_ready();
 
@@ -57,6 +62,8 @@ class EmulatorInstance
 		void* m_texture_id = nullptr;
 		std::vector<u32> m_frame_buffer;
 		std::unique_ptr<QtreGB> m_emulator;
+		std::vector<u8> m_cart;
+		std::vector<u8> m_boot_rom;
 		u8 m_buttonState[8] = {1,1,1,1,1,1,1,1};
 		bool m_is_frame_ready;
 		bool m_is_emulator_ready;

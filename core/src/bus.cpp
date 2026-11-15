@@ -19,8 +19,25 @@ Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Mem
 
 }
 
+void Bus::set_boot_rom(const std::vector<u8>& rom)
+{
+	const size_t count = rom.size() < m_boot_rom.size() ? rom.size() : m_boot_rom.size();
+	for(size_t i = 0; i < count; ++i)
+	{
+		m_boot_rom[i] = rom[i];
+	}
+	for(size_t i = count; i < m_boot_rom.size(); ++i)
+	{
+		m_boot_rom[i] = 0;
+	}
+}
+
 u8 Bus::read(u16 address)
 {
+	if(address < 0x100 && m_boot_rom_enabled)
+	{
+		return m_boot_rom[address];
+	}
 	if(address < 0x8000)
 	{
 		return m_cart->read(address);
@@ -86,7 +103,7 @@ u8 Bus::read(u16 address)
 			{
 				return m_dma->get_value();
 			}
-			return m_lcd->read(address - 0xFF40);
+			return m_ppu->read_lcd_register(static_cast<u16>(address - 0xFF40));
 		}
 		// Interrupts
 		else if(address == 0xFF0F)
@@ -110,18 +127,6 @@ u8 Bus::read(u16 address)
 
 void Bus::write(u16 address, u8 value)
 {
-	if(getenv("QTR_BGP_WRITE") && address == 0xFF47)
-	{
-		fprintf(stderr, "[BGPWRITE] gtick=%llu addr=%04X val=%02X\n",
-			qtreGB::qtregb_global_tick, address, value);
-	}
-
-	if(getenv("QTR_WX_WRITE") && address == 0xFF4B)
-	{
-		fprintf(stderr, "[WXWRITE] gtick=%llu addr=%04X val=%02X\n",
-			qtreGB::qtregb_global_tick, address, value);
-	}
-
 	if(address < 0x8000)
 	{
 		m_cart->write(address, value);
@@ -156,6 +161,13 @@ void Bus::write(u16 address, u8 value)
 	}
 	else if(address < 0xFF80)
 	{
+		// BOOT: writing any value to FF50 unmaps the boot ROM on DMG.
+		if(address == 0xFF50)
+		{
+			disable_boot_rom();
+			return;
+		}
+
 		// IO
 		if(address == 0xFF00)
 		{
@@ -189,7 +201,7 @@ void Bus::write(u16 address, u8 value)
 			}
 			else
 			{
-				m_lcd->write(address - 0xFF40, value);
+				m_ppu->write_lcd_register(static_cast<u16>(address - 0xFF40), value);
 
 				// The LCD power transition is applied synchronously at the LCDC write so that a
 				// STAT interrupt from the restarted LYC comparison is already pending when the CPU
@@ -197,10 +209,6 @@ void Bus::write(u16 address, u8 value)
 				if(address == 0xFF40)
 				{
 					m_ppu->ppu_sync_lcd_power();
-				}
-				else if(address == 0xFF41)
-				{
-					m_ppu->ppu_stat_write();
 				}
 			}
 		}

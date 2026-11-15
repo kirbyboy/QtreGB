@@ -46,6 +46,15 @@ class Timer
 		bool m_cpu_phase;				// CPU runs before this cycle's timer_tick; reads see end-of-cycle state
 		InterruptCallback m_interrupt_handler;
 
+		// DocBoy-style timer (only under QTR_CPU_MICRO). The divider is
+		// advanced by 4 once per M-cycle at T3.
+		u8 m_timer_state = 0;			// 0=None, 1=Reload, 2=Pending
+		bool m_last_div_signal = false;
+		void set_div(u16 value);
+		void inc_tima();
+		void on_falling_edge_inc_tima();
+		void handle_pending_tima_reload();
+
 		u16 selected_bit();	// bit 9 (mode 0) does not fit in u8
 		bool signal();
 		u16 div_end_of_cycle();

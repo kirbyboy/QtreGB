@@ -12,6 +12,10 @@ void DMA::dma_start(u8 start)
 	m_byte = 0;
 	m_pending = true;
 	m_start_delay = 2;
+	if(m_ppu)
+	{
+		m_ppu->set_dma_active(false);
+	}
 }
 
 void DMA::dma_tick()
@@ -28,6 +32,10 @@ void DMA::dma_tick()
 		{
 			// M2: the DMA owns OAM from here on (CPU reads return $FF).
 			m_active = true;
+			if(m_ppu)
+			{
+				m_ppu->set_dma_active(true);
+			}
 		}
 		return;
 	}
@@ -40,6 +48,10 @@ void DMA::dma_tick()
 	{
 		m_active = false;
 		m_pending = false;
+		if(m_ppu)
+		{
+			m_ppu->set_dma_active(false);
+		}
 	}
 }
 
@@ -57,4 +69,17 @@ void DMA::connect(IBus* bus, PPU* ppu)
 u8 DMA::get_value()
 {
 	return m_value;
+}
+
+void DMA::reset()
+{
+	m_active = false;
+	m_pending = false;
+	m_byte = 0;
+	m_value = 0;
+	m_start_delay = 0;
+	if(m_ppu)
+	{
+		m_ppu->set_dma_active(false);
+	}
 }

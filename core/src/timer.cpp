@@ -10,6 +10,15 @@ void Timer::set_interrupt_callback(InterruptCallback cb)
 
 void Timer::timer_init()
 {
+#ifdef QTR_CPU_MICRO
+	m_div = 0xABCC;
+	m_tima = 0x00;
+	m_tma = 0x00;
+	m_tac = 0x00;
+	m_timer_state = 0;
+	m_last_div_signal = false;
+	m_cpu_phase = false;
+#else
 	m_div = 0xAC00;
 	m_tima = 0x00;
 	m_tma = 0x00;
@@ -19,15 +28,22 @@ void Timer::timer_init()
 	m_tima_write_block = false;
 	m_div_increment_absorbed = false;
 	m_cpu_phase = false;
+#endif
 }
 
 void Timer::begin_cpu_phase()
 {
+#ifndef QTR_CPU_MICRO
 	m_cpu_phase = true;
+#endif
 }
 
 void Timer::timer_tick()
 {
+#ifdef QTR_CPU_MICRO
+	handle_pending_tima_reload();
+	set_div(static_cast<u16>(m_div + 4));
+#else
 	bool old_signal = signal();
 	if(m_div_increment_absorbed)
 	{
@@ -69,19 +85,27 @@ void Timer::timer_tick()
 
 	m_tima_write_block = false;
 	m_cpu_phase = false;
+#endif
 }
 
 u8 Timer::read_div()
 {
+#ifdef QTR_CPU_MICRO
+	return static_cast<u8>(m_div >> 8);
+#else
 	if(m_cpu_phase)
 	{
 		return static_cast<u8>(div_end_of_cycle() >> 8);
 	}
 	return m_div >> 8;
+#endif
 }
 
 void Timer::write_div()
 {
+#ifdef QTR_CPU_MICRO
+	set_div(0);
+#else
 	// The write cycle can raise a falling edge twice: the absorbed increment
 	// (k -> k+1) and the reset itself (last value -> 0). Tick if either side
 	// of the increment held the selected bit.
@@ -94,19 +118,31 @@ void Timer::write_div()
 	{
 		apply_timer_tick();
 	}
+#endif
 }
 
 u8 Timer::read_tima()
 {
+#ifdef QTR_CPU_MICRO
+	return m_tima;
+#else
 	if(m_cpu_phase)
 	{
 		return peek_tima();
 	}
 	return m_tima;
+#endif
 }
 
 void Timer::write_tima(u8 value)
 {
+#ifdef QTR_CPU_MICRO
+	if(m_timer_state != 1)
+	{
+		m_tima = value;
+		m_timer_state = 0;
+	}
+#else
 	// End-of-cycle judgment (same convention as reads): pending>1 is cycle A,
 	// the write cancels the reload. pending==1 or load_active>1 means the
 	// reload/load still lands this T-cycle, so hardware drops the write (MTS C).
@@ -121,6 +157,7 @@ void Timer::write_tima(u8 value)
 		m_tima = value;
 		m_tima_write_block = true;
 	}
+#endif
 }
 
 u8 Timer::read_tma()
@@ -132,12 +169,19 @@ void Timer::write_tma(u8 value)
 {
 	m_tma = value;
 
+#ifdef QTR_CPU_MICRO
+	if(m_timer_state == 1)
+	{
+		m_tima = value;
+	}
+#else
 	// Copy into TIMA only while the load is still active past this cycle;
 	// at load_active==1 the load window closes with the write (MTS tma C).
 	if(m_load_active > 1)
 	{
 		m_tima = value;
 	}
+#endif
 }
 
 u8 Timer::read_tac()
@@ -150,6 +194,10 @@ u8 Timer::read_tac()
 
 void Timer::write_tac(u8 value)
 {
+#ifdef QTR_CPU_MICRO
+	m_tac = value & 0x07;
+	on_falling_edge_inc_tima();
+#else
 	// Like write_div: both edges of the gate are evaluated on the
 	// end-of-cycle divider value (see div_end_of_cycle).
 	const u16 div = div_end_of_cycle();
@@ -161,10 +209,19 @@ void Timer::write_tac(u8 value)
 	{
 		apply_timer_tick();
 	}
+#endif
 }
 
 void Timer::serialize(TaggedSerializer& s)
 {
+# ifdef QTR_CPU_MICRO
+	s.process("div", m_div);
+	s.process("tima", m_tima);
+	s.process("tma", m_tma);
+	s.process("tac", m_tac);
+	s.process("timer_state", m_timer_state);
+	s.process("last_div_signal", m_last_div_signal);
+#else
 	s.process("div", m_div);
 	s.process("tima", m_tima);
 	s.process("tma", m_tma);
@@ -173,7 +230,49 @@ void Timer::serialize(TaggedSerializer& s)
 	s.process("tima_load_active", m_load_active);
 	s.process("tima_write_block", m_tima_write_block);
 	s.process("div_increment_absorbed", m_div_increment_absorbed);
+#endif
 }
+
+#ifdef QTR_CPU_MICRO
+void Timer::set_div(u16 value)
+{
+	m_div = value;
+	on_falling_edge_inc_tima();
+}
+
+void Timer::inc_tima()
+{
+	if(++m_tima == 0)
+	{
+		m_timer_state = 2;
+	}
+}
+
+void Timer::on_falling_edge_inc_tima()
+{
+	const bool tac_div_bit = (m_tac & 0x04) && (m_div & selected_bit());
+	if(m_last_div_signal && !tac_div_bit)
+	{
+		inc_tima();
+	}
+	m_last_div_signal = tac_div_bit;
+}
+
+void Timer::handle_pending_tima_reload()
+{
+	if(m_timer_state != 0)
+	{
+		if(--m_timer_state == 1)
+		{
+			m_tima = m_tma;
+			if(m_interrupt_handler)
+			{
+				m_interrupt_handler(InterruptType::IT_TIMER);
+			}
+		}
+	}
+}
+#endif
 
 u16 Timer::selected_bit()
 {

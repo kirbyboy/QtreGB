@@ -16,6 +16,7 @@ class DMA
 		bool dma_transferring();
 		void connect(IBus* bus, PPU* ppu);
 		u8 get_value();
+		void reset();
 
 
 	private:

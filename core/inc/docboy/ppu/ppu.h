@@ -1,0 +1,548 @@
+#ifndef PPU_H
+#define PPU_H
+
+#include "docboy/bus/oambus.h"
+#include "docboy/common/macros.h"
+#include "docboy/common/specs.h"
+#include "docboy/bus/vrambus.h"
+
+#include "utils/arrays.h"
+#include "utils/asserts.h"
+#include "utils/fillqueue.h"
+#include "utils/queue.h"
+#include "utils/vector.h"
+
+class Lcd;
+class Interrupts;
+class Dma;
+class Hdma;
+class Parcel;
+class OperatingMode;
+class SpeedSwitchController;
+struct CartridgeHeader;
+
+class Ppu {
+    DEBUGGABLE_CLASS()
+
+public:
+#ifdef ENABLE_CGB
+#ifdef ENABLE_BOOTROM
+    Ppu(Lcd& lcd, Interrupts& interrupts, Hdma& hdma, VramBus::View<Device::Ppu> vram_bus,
+        OamBus::View<Device::Ppu> oam_bus, Dma& dma_controller, SpeedSwitchController& speed_switch_controller,
+        OperatingMode& operating_mode);
+#else
+    Ppu(Lcd& lcd, Interrupts& interrupts, Hdma& hdma, VramBus::View<Device::Ppu> vram_bus,
+        OamBus::View<Device::Ppu> oam_bus, Dma& dma_controller, SpeedSwitchController& speed_switch_controller,
+        OperatingMode& operating_mode, CartridgeHeader& header);
+#endif
+#else
+    Ppu(Lcd& lcd, Interrupts& interrupts, VramBus::View<Device::Ppu> vram_bus, OamBus::View<Device::Ppu> oam_bus,
+        Dma& dma_controller);
+#endif
+
+    void tick();
+
+#ifdef ENABLE_CGB
+    void enable_color_resolver();
+    void disable_color_resolver();
+#endif
+
+    uint16_t debug_dots() const { return dots; }
+    uint8_t debug_lx() const { return lx; }
+    bool debug_fetching() const { return is_fetching_sprite; }
+    uint8_t debug_fifo() const { return static_cast<uint8_t>(bg_fifo.size()); }
+    uint8_t debug_obj_fifo() const { return static_cast<uint8_t>(obj_fifo.size()); }
+
+    void reset();
+
+    // PPU I/O registers
+    uint8_t read_lcdc() const;
+    void write_lcdc(uint8_t value);
+
+    uint8_t read_stat() const;
+    void write_stat(uint8_t value);
+
+#ifdef ENABLE_CGB
+    void write_scy(uint8_t value);
+    void write_scx(uint8_t value);
+    void write_wx(uint8_t value);
+#endif
+
+    void write_dma(uint8_t value);
+
+#ifdef ENABLE_CGB
+    uint8_t read_bcps() const;
+    void write_bcps(uint8_t value);
+
+    uint8_t read_bcpd() const;
+    void write_bcpd(uint8_t value);
+
+    uint8_t read_ocps() const;
+    void write_ocps(uint8_t value);
+
+    uint8_t read_ocpd() const;
+    void write_ocpd(uint8_t value);
+
+    uint8_t read_opri() const;
+    void write_opri(uint8_t value);
+#ifdef ENABLE_BOOTROM
+    void write_opri_effective(uint8_t value);
+#endif
+#endif
+
+    struct Lcdc {
+        bool enable = false;
+        bool win_tile_map = false;
+        bool win_enable = false;
+        bool bg_win_tile_data = false;
+        bool bg_tile_map = false;
+        bool obj_size = false;
+        bool obj_enable = false;
+        bool bg_win_enable = false;
+    } lcdc;
+
+    struct Stat {
+        bool lyc_eq_ly_int = false;
+        bool oam_int = false;
+        bool vblank_int = false;
+        bool hblank_int = false;
+        bool lyc_eq_ly = false;
+        uint8_t mode = 0;
+    } stat;
+
+    uint8_t scy = 0;
+    uint8_t scx = 0;
+    uint8_t ly = 0;
+    uint8_t lyc = 0;
+    uint8_t dma = 0;
+    uint8_t bgp = 0;
+    uint8_t obp0 = 0;
+    uint8_t obp1 = 0;
+    uint8_t wy = 0;
+    uint8_t wx = 0;
+
+#ifdef ENABLE_CGB
+    struct Bcps : Composite<Specs::Registers::Video::BCPS> {
+        Bool auto_increment {make_bool()};
+        UInt8 address {make_uint8()};
+    } bcps {};
+
+    struct Ocps : Composite<Specs::Registers::Video::OCPS> {
+        Bool auto_increment {make_bool()};
+        UInt8 address {make_uint8()};
+    } ocps {};
+
+    struct Opri : Composite<Specs::Registers::Video::OPRI> {
+        Bool priority_mode {make_bool()};
+    } opri {};
+#endif
+
+private:
+    using TickSelector = void (Ppu::*)();
+    using FetcherTickSelector = void (Ppu::*)();
+    using PixelColorIndex = uint8_t;
+
+    struct BgPixel {
+        PixelColorIndex color_index;
+#ifdef ENABLE_CGB
+        uint8_t attributes;
+#endif
+    };
+
+    struct ObjPixel {
+        PixelColorIndex color_index;
+        uint8_t attributes;
+        uint8_t number; // TODO: probably can be removed since oam scan is ordered by number
+        uint8_t x;
+    };
+
+    struct OamScanEntry {
+        uint8_t number; // [0, 40)
+        uint8_t y;
+#if defined(ENABLE_DEBUGGER) || defined(ENABLE_ASSERTS)
+        uint8_t x;
+#endif
+    };
+
+    struct PendingWrite {
+        uint8_t countdown {};
+        uint8_t value {};
+    };
+
+    // PPU helpers
+    void turn_on();
+    void turn_off();
+
+    bool is_lyc_eq_ly() const;
+
+    void raise_stat_irq();
+
+    void tick_pending_write();
+    void tick_stat();
+
+    void update_stat_irq(bool irq);
+    void update_stat_irq_for_oam_mode();
+    void update_stat_irq_for_oam_mode_do_not_clear_last_stat_irq();
+
+    void begin_increase_ly();
+    void end_increase_ly();
+
+    void write_stat_real(uint8_t value);
+    void write_lcdc_real(uint8_t value);
+
+    void tick_window();
+
+    // PPU states
+    void oam_scan_even();
+    void oam_scan_odd();
+    void oam_scan_77();
+    void oam_scan_done();
+    void oam_scan_after_turn_on();
+    void oam_scan_after_turn_on_78();
+    void oam_scan_after_turn_on_79();
+
+    void pixel_transfer_dummy_lx0();
+    void pixel_transfer_discard_lx0();
+    void pixel_transfer_discard_lx0_wx0_scx();
+    void pixel_transfer_lx0();
+    void pixel_transfer_lx8();
+
+    void hblank();
+    void hblank_452();
+    void hblank_453();
+    void hblank_454();
+    void hblank_455();
+    void hblank_last_line();
+    void hblank_last_line_453();
+    void hblank_last_line_454();
+    void hblank_last_line_455();
+    void hblank_first_line_after_turn_on();
+
+    void vblank();
+    void vblank_453();
+    void vblank_454();
+    void vblank_455();
+    void vblank_last_line();
+    void vblank_last_line_2();
+    void vblank_last_line_3();
+    void vblank_last_line_4();
+    void vblank_last_line_7();
+    void vblank_last_line_453();
+    void vblank_last_line_454();
+    void vblank_last_line_455();
+
+    // PPU states helpers
+    void enter_oam_scan();
+    void enter_pixel_transfer();
+    void enter_hblank();
+    void enter_vblank();
+    void enter_new_frame();
+
+    void tick_fetcher();
+    void reset_fetcher();
+
+    template <uint8_t mode>
+    void update_mode();
+
+    uint8_t resolve_color(uint8_t color_index, uint8_t palette);
+#ifdef ENABLE_CGB
+    uint16_t resolve_color(uint8_t color_index, const uint8_t* palette /* 8 bytes */);
+#endif
+
+    void increase_lx();
+
+    bool is_bg_fifo_ready_to_be_popped() const;
+    bool is_obj_ready_to_be_fetched() const;
+
+    void fill_bg_fifo();
+
+    void handle_pixel_slice_fetcher_push();
+    void handle_pending_bg_fifo_fill();
+
+    void handle_pending_window_activation();
+    void activate_window();
+
+#ifdef ENABLE_CGB
+    void handle_win_disabled_while_activating_glitch();
+
+    bool is_disabling_window() const;
+#endif
+
+    void check_window_activation();
+    void setup_fetcher_for_window();
+
+    void reset_oam_scan_entries();
+    void oam_scan_read_request();
+    void oam_scan_flush_read_request();
+    void handle_oam_scan_entry();
+
+    // Fetcher states
+    void bgwin_prefetcher_get_tile_0();
+
+    void bg_prefetcher_get_tile_0();
+    void bg_prefetcher_get_tile_1();
+    void bg_pixel_slice_fetcher_get_tile_data_low_0();
+    void bg_pixel_slice_fetcher_get_tile_data_low_1();
+    void bg_pixel_slice_fetcher_get_tile_data_high_0();
+    void bg_pixel_slice_fetcher_get_tile_data_high_1();
+
+    void win_prefetcher_activating();
+    void win_prefetcher_get_tile_0();
+    void win_prefetcher_get_tile_1();
+    void win_pixel_slice_fetcher_get_tile_data_low_0();
+    void win_pixel_slice_fetcher_get_tile_data_low_1();
+    void win_pixel_slice_fetcher_get_tile_data_high_0();
+    void win_pixel_slice_fetcher_get_tile_data_high_1();
+
+    void bgwin_pixel_slice_fetcher_get_tile_data_high_1();
+
+    void obj_prefetcher_get_tile_0();
+    void obj_prefetcher_get_tile_1();
+    void obj_pixel_slice_fetcher_get_tile_data_low_0();
+    void obj_pixel_slice_fetcher_get_tile_data_low_1();
+    void obj_pixel_slice_fetcher_get_tile_data_high_0();
+    void obj_pixel_slice_fetcher_get_tile_data_high_1_and_merge_with_obj_fifo();
+
+    void pixel_slice_fetcher_idle();
+
+    // Fetcher states helpers
+    void setup_obj_pixel_slice_fetcher_tile_data_address();
+    void setup_bg_pixel_slice_fetcher_tilemap_tile_address();
+    void setup_bg_pixel_slice_fetcher_tile_data_address();
+    void setup_win_pixel_slice_fetcher_tilemap_tile_address();
+    void setup_win_pixel_slice_fetcher_tile_data_address();
+
+    void read_bgwin_tile_number_and_attributes();
+
+    void read_bgwin_tile_data_low();
+    void read_bgwin_tile_data_high();
+    void read_obj_tile_data_low();
+    void read_obj_tile_data_high();
+
+#ifdef ENABLE_CGB
+    void handle_bg_tile_data_sel_change_low_glitch();
+    void handle_bg_tile_data_sel_change_high_glitch();
+    void handle_win_tile_data_sel_change_low_glitch();
+    void handle_win_tile_data_sel_change_high_glitch();
+#endif
+
+    void enable_pixel_slice_fetcher_push();
+    void disable_pixel_slice_fetcher_push();
+
+    void cache_bg_win_fetch();
+    void restore_bg_win_fetch();
+
+    static const TickSelector TICK_SELECTORS[];
+    static const FetcherTickSelector FETCHER_TICK_SELECTORS[];
+
+    Lcd& lcd;
+    Interrupts& interrupts;
+#ifdef ENABLE_CGB
+    Hdma& hdma;
+#endif
+    VramBus::View<Device::Ppu> vram;
+    OamBus::View<Device::Ppu> oam;
+    Dma& dma_controller;
+#ifdef ENABLE_CGB
+    // TODO: bad: PPU shouldn't know speed_switch_controller
+    SpeedSwitchController& speed_switch_controller;
+    OperatingMode& operating_mode;
+#ifndef ENABLE_BOOTROM
+    CartridgeHeader& header;
+#endif
+#endif
+
+    TickSelector tick_selector {};
+    FetcherTickSelector fetcher_tick_selector {&Ppu::bg_prefetcher_get_tile_0};
+
+    bool last_stat_irq {};
+    bool enable_lyc_eq_ly_irq {true};
+    bool pending_stat_irq {};
+
+#ifdef ENABLE_CGB
+    uint8_t stat_mode {};
+    bool delay_stat_mode_update {};
+#endif
+
+    uint16_t dots {}; // [0, 456)
+    uint8_t lx {};    // LX=X+8, therefore [0, 168]
+
+    uint8_t mode {};
+
+    uint8_t last_ly {};  // LY delayed by 1 t-cycle
+    uint8_t last_lyc {}; // LYC delayed by 1 t-cycle
+#ifndef ENABLE_CGB
+    uint8_t last_bgp {}; // BGP delayed by 1 t-cycles
+#endif
+    uint8_t last_wx {}; // WX delayed by 1 t-cycle
+    Lcdc last_lcdc {};  // LCDC delayed by 1 t-cycle
+
+    struct {
+#ifdef ENABLE_CGB
+        PendingWrite lcdc {};
+        PendingWrite scy {};
+        PendingWrite scx {};
+        PendingWrite wx {};
+#endif
+
+#ifndef ENABLE_CGB
+        PendingWrite stat {};
+#endif
+    } pending_write;
+
+    FillQueue<BgPixel, 8> bg_fifo {};
+    Queue<ObjPixel, 8> obj_fifo {};
+
+    Vector<OamScanEntry, 10> oam_entries[168] {};
+#ifdef ENABLE_ASSERTS
+    uint8_t oam_entries_count {};
+    uint8_t oam_entries_not_served_count {};
+#endif
+#ifdef ENABLE_DEBUGGER
+    Vector<OamScanEntry, 10> scanline_oam_entries {}; // not cleared after oam scan
+#endif
+
+    bool pixel_slice_fetcher_push_enabled {};
+    bool pending_bg_fifo_fill {};
+
+#ifdef ENABLE_CGB
+    struct {
+        bool pending {};
+        uint8_t size {};
+    } pending_bg_fifo_partial_fill;
+#endif
+
+    bool is_fetching_sprite {};
+
+    bool is_glitched_line_0 {};
+    uint8_t glitched_line_0_hblank_delay {}; // [0, 2]
+
+#ifndef ENABLE_CGB
+    bool vblank_last_line_stat_mode_hblank_glitch {};
+#endif
+
+#ifdef ENABLE_CGB
+    uint8_t real_ly {};
+    uint8_t next_ly {};
+#endif
+
+#ifdef ENABLE_DEBUGGER
+    struct {
+        uint16_t oam_scan {};
+        uint16_t pixel_transfer {};
+        uint16_t hblank {};
+    } timings;
+#endif
+
+    struct {
+        OamBus::Word oam {};
+    } registers {};
+
+    // Oam Scan
+    struct {
+        uint8_t count {}; // [0, 10]
+        uint8_t index {}; // [0, 40]
+    } oam_scan;
+
+    // Pixel Transfer
+    struct {
+        struct {
+            uint8_t to_discard {}; // [0, 8)
+            uint8_t discarded {};  // [0, 8)
+        } initial_scx;
+    } pixel_transfer;
+
+    // Window
+    struct {
+        bool active_for_frame {}; // window activated for the frame
+        uint8_t wly {};           // window line counter
+
+        bool activating {};     // window hit but not activated yet
+        bool active {};         // currently rendering window
+        bool just_activated {}; // first fetch of this window streak
+
+#ifdef ENABLE_CGB
+        bool disabled_while_activating {};
+#endif
+
+#if defined(ENABLE_DEBUGGER) || defined(ENABLE_ASSERTS)
+        Vector<uint8_t, 20> line_triggers {};
+#endif
+    } w;
+
+    // Bg/Window Prefetcher
+    struct {
+        uint8_t lx {}; // [0, 256), advances 8 by 8
+        uint16_t tilemap_tile_vram_addr {};
+
+        uint8_t tile_number {}; // [0, 256)
+#ifdef ENABLE_CGB
+        uint8_t attributes {};
+        uint8_t scy {};
+#endif
+
+#ifdef ENABLE_DEBUGGER
+        uint8_t tilemap_x {};
+        uint8_t tilemap_y {};
+        uint8_t tilemap_vram_addr {};
+#endif
+
+#ifdef ENABLE_CGB
+        uint8_t lx_increment_countdown {};
+#endif
+
+        struct {
+            bool has_data {};
+            uint8_t tile_data_low {};
+            uint8_t tile_data_high {};
+        } interrupted_fetch {};
+    } bwf;
+
+    // Window Prefetcher
+    struct {
+        uint8_t tilemap_x {};
+    } wf;
+
+    // Obj Prefetcher
+    struct {
+        OamScanEntry entry {};  // hit obj
+        uint8_t tile_number {}; // [0, 256)
+        uint8_t attributes {};
+    } of;
+
+    // Pixel Slice Fetcher
+    struct {
+        uint16_t tile_data_vram_address {};
+        uint8_t tile_data_low {};
+        uint8_t tile_data_high {};
+
+#ifdef ENABLE_CGB
+        uint8_t last_tile_data_low {};
+        uint8_t last_tile_data_high {};
+
+        uint8_t last_unsigned_fetch_data {};
+
+        struct {
+            uint8_t data {};
+            uint8_t decay {};
+        } last_fetch;
+#endif
+    } psf;
+
+#ifdef ENABLE_CGB
+    // CGB palettes
+    uint8_t bg_palettes[64] {};
+    uint8_t obj_palettes[64] {};
+
+    // CGB Quirks
+    bool color_resolver_enabled {};
+
+    bool obj_priority_mode {};
+#endif
+
+#ifdef ENABLE_DEBUGGER
+    uint64_t cycles {};
+#endif
+};
+
+#endif // PPU_H

@@ -4,6 +4,19 @@ CXX := g++
 
 WARN := -std=c++17 -fdiagnostics-color=always -Wall -Wextra -Wpedantic
 
+ifeq ($(QTR_CPU_MICRO),1)
+WARN += -DQTR_CPU_MICRO
+QTR_PPU_FULL ?= 1
+endif
+
+ifeq ($(QTR_PPU_FULL),1)
+WARN += -DQTR_PPU_FULL
+endif
+
+ifeq ($(QTR_CPU_WRITE_T3),1)
+WARN += -DQTR_CPU_WRITE_T3
+endif
+
 # Build de la app/GUI: sin optimizar y con log -> cómodo para depurar.
 BUILD_DBG := -g -O0 -DENABLE_LOG
 # Build de tests/runners: optimizado y sin log -> lo bastante rápido.

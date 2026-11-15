@@ -1,5 +1,7 @@
 #include "emulator_instance.h"
 
+#include <utility>
+
 using namespace qtreGB;
 
 EmulatorInstance::EmulatorInstance(IGuiBackend *backend) :
@@ -88,9 +90,32 @@ bool EmulatorInstance::is_button_pressed(u8 button) const
 
 void EmulatorInstance::load_cart(std::vector<u8> cart)
 {
+	m_cart = std::move(cart);
+	reset();
+}
+
+bool EmulatorInstance::load_boot_rom(std::vector<u8> boot_rom)
+{
+	if(boot_rom.size() != 0x100)
+	{
+		return false;
+	}
+	m_boot_rom = std::move(boot_rom);
+	return true;
+}
+
+void EmulatorInstance::reset()
+{
 	m_emulator = std::unique_ptr<QtreGB>(new QtreGB());
-	m_emulator->load_cart(cart);
-	m_is_emulator_ready = true;
+	if(!m_boot_rom.empty())
+	{
+		m_emulator->load_boot_rom(m_boot_rom);
+	}
+	if(!m_cart.empty())
+	{
+		m_emulator->load_cart(m_cart);
+	}
+	m_is_emulator_ready = !m_cart.empty();
 }
 
 void EmulatorInstance::tick()

@@ -1,0 +1,35 @@
+dmg-acid2                              FAIL   diff=757
+m2_win_en_toggle                       PASS   diff=0
+m3_bgp_change                          FAIL   diff=7245
+m3_bgp_change_sprites                  FAIL   diff=8158
+m3_lcdc_bg_en_change2                  SKIP   (no expected PNG)
+m3_lcdc_bg_en_change                   FAIL   diff=3474
+m3_lcdc_bg_map_change2                 SKIP   (no expected PNG)
+m3_lcdc_bg_map_change                  FAIL   diff=2386
+m3_lcdc_obj_en_change                  FAIL   diff=146
+m3_lcdc_obj_en_change_variant          FAIL   diff=1271
+m3_lcdc_obj_size_change                FAIL   diff=310
+m3_lcdc_obj_size_change_scx            FAIL   diff=190
+m3_lcdc_tile_sel_change2               SKIP   (no expected PNG)
+m3_lcdc_tile_sel_change                FAIL   diff=1430
+m3_lcdc_tile_sel_win_change2           SKIP   (no expected PNG)
+m3_lcdc_tile_sel_win_change            FAIL   diff=1747
+m3_lcdc_win_en_change_multiple         FAIL   diff=6175
+m3_lcdc_win_en_change_multiple_wx      FAIL   diff=6016
+m3_lcdc_win_map_change2                SKIP   (no expected PNG)
+m3_lcdc_win_map_change                 FAIL   diff=2308
+m3_obp0_change                         FAIL   diff=432
+m3_scx_high_5_bits_change2             SKIP   (no expected PNG)
+m3_scx_high_5_bits                     FAIL   diff=9041
+m3_scx_low_3_bits                      FAIL   diff=540
+m3_scy_change2                         SKIP   (no expected PNG)
+m3_scy_change                          FAIL   diff=10579
+m3_window_timing                       FAIL   diff=2341
+m3_window_timing_wx_0                  FAIL   diff=2926
+m3_wx_4_change                         FAIL   diff=11527
+m3_wx_4_change_sprites                 FAIL   diff=27
+m3_wx_5_change                         FAIL   diff=11098
+m3_wx_6_change                         FAIL   diff=8174
+win_without_bg                         SKIP   (no expected PNG)
+
+1 passed, 24 failed, 8 skipped

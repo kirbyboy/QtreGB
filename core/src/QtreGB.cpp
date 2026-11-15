@@ -6,13 +6,11 @@
 
 #include <cstdlib>
 #include <cstdio>
+#include <utility>
 
 #include "QtreGB.h"
 
 using namespace qtreGB;
-
-// Monotonic CPU tick counter shared with the debug traces (QTR_* env hooks).
-namespace qtreGB { unsigned long long qtregb_global_tick = 0; }
 using namespace std;
 
 #if 1
@@ -23,7 +21,11 @@ using namespace std;
 
 QtreGB::QtreGB() :
 	m_interrupt_controller(InterruptController()),
+#ifdef QTR_CPU_MICRO
+	m_cpu(),
+#else
 	m_cpu(Z80GB(&m_interrupt_controller)),
+#endif
 	m_cart(Cart()),
 	m_wram(Memory(0x2000)),
 	m_hram(Memory(0x80)),
@@ -39,20 +41,24 @@ QtreGB::QtreGB() :
 {
 	m_cpu.connect_bus(&m_bus_cpu);
 	m_cpu.connect_error_reporter(&m_errors);
-	m_cpu.set_ppu_callback([this]() { m_ppu.ppu_tick(); });
-	m_cpu.set_ppu(&m_ppu);
-	m_cpu.set_timer_callback([this]() { m_timer.timer_tick(); });
+
+#ifdef QTR_CPU_MICRO
+	// CpuMicro does not own the interrupt controller: point its IF/IE
+	// callbacks at the active CPU. Z80GB sets these in its constructor.
+	m_interrupt_controller.set_IE_read_callback([this]() { return m_cpu.read_IE(); });
+	m_interrupt_controller.set_IE_write_callback([this](u8 value) { m_cpu.write_IE(value); });
+	m_interrupt_controller.set_IF_read_callback([this]() { return m_cpu.read_IF(); });
+	m_interrupt_controller.set_IF_write_callback([this](u8 value) { m_cpu.write_IF(value); });
+#endif
+
 	m_cart.connect_error_reporter(&m_errors);
 	m_dma.connect(&m_bus, &m_ppu);
 	m_ppu.connect_bus(&m_bus);
 	m_ppu.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
 	m_ppu.set_frame_callback([this](bool value){ set_frame_ready(value);});
 
-	m_cpu.reset();
-	m_timer.timer_init();
-	m_ppu.ppu_init();
 	m_timer.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
-
+	reset_machine();
 }
 
 QtreGB::~QtreGB()
@@ -62,9 +68,65 @@ QtreGB::~QtreGB()
 
 void QtreGB::tick()
 {
+    switch(m_clock.get())
+    {
+        case Phase::T0: tick_t0(); break;
+        case Phase::T1: tick_t1(); break;
+        case Phase::T2: tick_t2(); break;
+        case Phase::T3: tick_t3(); break;
+        default: break;
+    }
+
+    m_clock.advance();
+}
+
+void QtreGB::cycle()
+{
+    // Un M-cycle = cuatro T-cycles. tick() sigue siendo un T-cycle para no
+    // romper la GUI, el runner ni los tests.
+    tick();
+    tick();
+    tick();
+    tick();
+}
+
+void QtreGB::tick_t0() { tick_once(); }
+void QtreGB::tick_t1() { tick_once(); }
+void QtreGB::tick_t2() { tick_once(); }
+void QtreGB::tick_t3() { tick_once(); }
+
+void QtreGB::tick_once()
+{
+	if(std::getenv("QTR_IRQDBG"))
+	{
+		static int n61 = 0;
+		static int n26 = 0;
+		static int n2b = 0;
+		static int n100 = 0;
+		const u16 pc = m_cpu.get_pc();
+		const bool show =
+			(pc == 0x061D && n61++ < 5) ||
+			(pc == 0x0626 && n26++ < 5) ||
+			(pc == 0x062B && n2b++ < 5) ||
+			(pc == 0x0100 && n100++ < 1);
+		if(show)
+		{
+			std::fprintf(stderr, "CPUEVT pc=%04X dot=%u ly=%u if=%02X ie=%02X\n",
+				static_cast<unsigned>(pc), static_cast<unsigned>(m_ppu.debug_dots()),
+				static_cast<unsigned>(m_lcd.m_ly),
+				static_cast<unsigned>(m_cpu.read_IF()), static_cast<unsigned>(m_cpu.read_IE()));
+		}
+	}
 	if(m_errors.has_error())
 	{
 		return;
+	}
+
+	// Safety net for boot ROMs that jump to the cartridge without writing
+	// FF50: reaching 0x0100 unmaps the internal ROM as the real boot ROM does.
+	if(m_bus.is_boot_rom_enabled() && m_cpu.get_pc() >= 0x0100)
+	{
+		m_bus.disable_boot_rom();
 	}
 
 	if(m_cpu.is_end_opcode() && !m_cpu.is_interruption_time())
@@ -103,10 +165,20 @@ void QtreGB::tick()
 			}
 		#endif
 	}
+#ifdef QTR_CPU_MICRO
+	// DocBoy timer: one tick per M-cycle, after the CPU T3.
+	m_cpu.tick();
+	if(m_clock.get() == Phase::T3)
+	{
+		m_timer.timer_tick();
+	}
+#else
 	m_timer.begin_cpu_phase();
-	m_cpu.tick();	// CPU tick + PPU tick + timer tick (integrated) + interrupt check
+	m_cpu.tick();
 
-	qtregb_global_tick++;
+	m_timer.timer_tick();
+#endif
+	m_ppu.ppu_tick();
 
 	if(m_cpu.is_end_m_cycle())
 	{
@@ -144,30 +216,47 @@ bool QtreGB::load_cart(vector<u8> cart)
 {
 	m_errors.clear();
 	serial.clear();
-
 	if(m_cart.load_cart(cart) != 0)
 	{
 		return false;
 	}
-
-	apply_post_boot_vram();
+	reset_machine();
 	return true;
 }
 
-void QtreGB::apply_post_boot_vram()
+bool QtreGB::load_boot_rom(vector<u8> boot_rom)
 {
-	// The DMG boot ROM leaves the Nintendo (r) logo tile in VRAM at tile $19
-	// ($8190-$819F). Some Mealybug tests (e.g. m3_obp0_change) use that tile
-	// for sprites without writing any VRAM themselves, so reproduce it when
-	// the boot ROM is not emulated. Only this tile is written: the rest of the
-	// post-boot VRAM (logo tiles and their tile map) is not expected by the
-	// test images and would make them diverge.
-	static const u8 k_registered_tile[8] = {0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C};
-
-	for(int i = 0; i < 8; i++)
+	if(boot_rom.size() != 0x100)
 	{
-		m_bus.write(0x8190 + i * 2, k_registered_tile[i]);
+		return false;
 	}
+
+	m_boot_rom = std::move(boot_rom);
+	m_has_boot_rom = true;
+	return true;
+}
+
+void QtreGB::reset()
+{
+	reset_machine();
+}
+
+void QtreGB::reset_machine()
+{
+	m_errors.clear();
+	serial.clear();
+
+	if(m_has_boot_rom)
+	{
+		m_bus.set_boot_rom(m_boot_rom);
+	}
+	m_bus.set_boot_rom_enabled(m_has_boot_rom);
+	m_cpu.reset(m_has_boot_rom);
+	m_timer.timer_init();
+	m_ppu.ppu_init(m_has_boot_rom);
+	m_dma.reset();
+	m_clock.reset();
+	m_frame_ready = false;
 }
 
 bool QtreGB::get_frame_ready()

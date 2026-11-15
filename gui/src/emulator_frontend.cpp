@@ -53,8 +53,6 @@ void EmulatorFrontend::draw_main_window()
 				std::string filename = "../roms/01-special.gb"; // your file dialog function
 				if (!filename.empty())
 				{
-					m_emulator.reset(new EmulatorInstance(m_backend));
-
 					ifstream myfile (filename, ios::binary);
 					if (myfile.is_open())
 					{
@@ -76,8 +74,6 @@ void EmulatorFrontend::draw_main_window()
 				std::string filename = open_rom_dialog();
 				if(!filename.empty())
 				{
-					m_emulator.reset(new EmulatorInstance(m_backend));
-
 					ifstream myfile (filename, ios::binary);
 					if (myfile.is_open())
 					{
@@ -93,6 +89,48 @@ void EmulatorFrontend::draw_main_window()
 						m_emulator->load_cart(rom);
 					}
 				}
+			}
+			if (ImGui::MenuItem("Load BIOS..."))
+			{
+				std::string filename = open_bios_dialog();
+				if(!filename.empty())
+				{
+					ifstream myfile (filename, ios::binary);
+					if (myfile.is_open())
+					{
+						myfile.seekg(0, ios::end);
+						int file_size = myfile.tellg();
+
+						vector<u8> bios;
+						myfile.seekg(0, ios::beg);
+						bios.resize(static_cast<std::size_t>(file_size));
+						myfile.read(reinterpret_cast<char*>(bios.data()), static_cast<std::size_t>(file_size));
+						myfile.close();
+
+						if(m_emulator->load_boot_rom(bios))
+						{
+							m_bios_message.clear();
+						}
+						else
+						{
+							m_bios_message = "BIOS: invalid size (expected 256 bytes)";
+						}
+					}
+				}
+			}
+			if (ImGui::MenuItem("Reset"))
+			{
+				m_emulator->reset();
+				m_bios_message.clear();
+			}
+
+			const std::string bios_status = !m_emulator->has_boot_rom()
+				? "BIOS: none"
+				: (m_emulator->boot_rom_active() ? "BIOS: active" : "BIOS: loaded (reset to apply)");
+			ImGui::MenuItem(bios_status.c_str(), nullptr, false, false);
+			if(!m_bios_message.empty())
+			{
+				ImGui::MenuItem(m_bios_message.c_str(), nullptr, false, false);
 			}
 			ImGui::EndMenu();
 		}
@@ -164,6 +202,13 @@ std::string EmulatorFrontend::open_rom_dialog()
 {
     const char *filters[] = {"*.gb"};
     const char *file = tinyfd_openFileDialog("Open ROM", "", 1, filters, "Game Boy ROMs", 0);
+    return file ? file : "";
+}
+
+std::string EmulatorFrontend::open_bios_dialog()
+{
+    const char *filters[] = {"*.gb", "*.bin"};
+    const char *file = tinyfd_openFileDialog("Open boot ROM", "", 2, filters, "Game Boy boot ROM", 0);
     return file ? file : "";
 }
 

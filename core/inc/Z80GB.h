@@ -6,13 +6,11 @@
 #include "icpu_registers.h"
 #include "interrupt_controller.h"
 #include "tagged_serializer.h"
-#include <functional>
 
 namespace qtreGB
 {
 
 class ErrorReporter;
-class PPU;
 
 class Z80GB : public ICPURegisters
 {
@@ -21,11 +19,7 @@ class Z80GB : public ICPURegisters
 		Z80GB(InterruptController* interrupt_controller);
 
 		void tick();
-		void reset();
-		void check_interrupts();
-		void set_ppu_callback(std::function<void()> cb) { m_ppu_callback = cb; }
-		void set_ppu(PPU* ppu) { m_ppu = ppu; }
-		void set_timer_callback(std::function<void()> cb) { m_timer_callback = cb; }
+		void reset(bool boot_rom = false);
 
 		u8 read_register(RegType reg_type);
 		void write_register(RegType reg_type, u8 value);
@@ -46,6 +40,8 @@ class Z80GB : public ICPURegisters
 		bool is_end_m_cycle() const;	// m-cycle edge: m_t_cycle % 4 == 0
 		bool is_end_opcode() const;
 		bool is_interruption_time() const;
+		u16 get_pc() const { return m_pc; }
+		u8 peek_next_opcode() const { return m_bus != nullptr ? m_bus->read(m_pc) : 0xFF; }
 
 		// --- Savestates / access backdoor ---
 		// Mirror of the observable registers. It is consumed in the same order
@@ -91,10 +87,7 @@ class Z80GB : public ICPURegisters
 		u8 m_m_cycle;	// actual m-cycle of the actual opcode => 1 m-cycle = 4 t-cycles
 		bool m_end_opcode;	// indicates if actual opcode has ended.
 
-		IBus *m_bus = nullptr;
-		std::function<void()> m_ppu_callback;
-		std::function<void()> m_timer_callback;	// address bus
-		PPU* m_ppu = nullptr;	// for DMG I/O write conflict rules (OBJ_EN hacks)
+		IBus *m_bus = nullptr;	// address bus
 		ErrorReporter *m_errors = nullptr;	// central error reporter, not owned
 
 		u16 m_fetched_address;	// just a var to put temporary addresses between ticks
@@ -110,12 +103,6 @@ class Z80GB : public ICPURegisters
 		void in_ld_r16_d16(RegType destiny);	// LD instruction, inmediate 2 bytes to 16 bits register
 		void in_ld_r_addr(RegType destiny, u16 address);	// LD instruction, address content into register
 		void in_ld_addr_r(u16 address, RegType origin);	// LD instruction, address content into register
-		// DMG I/O write conflict rules (handoff §25): LCDC/BGP/OBP land their
-		// write 2 T into the write M-cycle. io_conflict_write performs the
-		// t=2 intermediate and t=3 real writes (no-op for other addresses);
-		// io_has_conflict_rule tells the caller to skip the plain t=4 write.
-		void io_conflict_write(u16 address, u8 value, u8 t_cycle);
-		bool io_has_conflict_rule(u16 address) const;
 		void in_ld_r_d8(RegType destiny);	// LD instruction, inmediate byte into register
 		void in_ld_d16_r16(RegType origin); // LD instruction, register value into address indicated by 2 inmediate bytes.
 

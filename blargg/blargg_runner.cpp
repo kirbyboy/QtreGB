@@ -51,6 +51,20 @@ bool load_rom(const std::string& path, std::vector<u8>& rom, std::string& error)
 	return true;
 }
 
+bool load_boot_rom(const std::string& path, std::vector<u8>& boot_rom, std::string& error)
+{
+	if(!load_rom(path, boot_rom, error))
+	{
+		return false;
+	}
+	if(boot_rom.size() != 0x100)
+	{
+		error = "expected a 256-byte DMG boot ROM";
+		return false;
+	}
+	return true;
+}
+
 std::string basename_of(const std::string& path)
 {
 	const size_t slash = path.find_last_of('/');
@@ -63,7 +77,7 @@ std::string build_diagnostics(QtreGB& emu)
 {
 	TaggedSerializer state_out(TaggedSerializer::Mode::Write);
 	emu.m_cpu.serialize(state_out);
-	Z80GB::State state;
+	CpuState state;
 	TaggedSerializer state_in(TaggedSerializer::Mode::Read, state_out.data());
 	state.serialize(state_in);
 
@@ -106,10 +120,14 @@ std::string read_memory_text(QtreGB& emu)
 	return text;
 }
 
-TestResult run_rom(const std::vector<u8>& rom, long max_cycles)
+TestResult run_rom(const std::vector<u8>& rom, long max_cycles, const std::vector<u8>& boot_rom)
 {
 	TestResult result;
 	QtreGB emu;
+	if(!boot_rom.empty())
+	{
+		emu.load_boot_rom(boot_rom);
+	}
 	emu.load_cart(rom);
 	u8 prev_sc = 0;
 
@@ -194,6 +212,17 @@ int main(int argc, char** argv)
 	int failed = 0;
 	int pending = 0;
 
+	std::vector<u8> boot_rom;
+	if(const char* bios_path = std::getenv("QTR_BIOS"))
+	{
+		std::string bios_error;
+		if(!load_boot_rom(bios_path, boot_rom, bios_error))
+		{
+			std::cerr << "BIOS ERROR (" << bios_error << "): " << bios_path << "\n";
+			return 1;
+		}
+	}
+
 	std::cout << std::uppercase << std::setfill('0');
 
 	for(int i = 1; i < argc; i++)
@@ -210,7 +239,7 @@ int main(int argc, char** argv)
 			continue;
 		}
 
-		const TestResult result = run_rom(rom, max_cycles);
+		const TestResult result = run_rom(rom, max_cycles, boot_rom);
 
 		std::cout << std::dec << std::setfill(' ') << std::setw(28) << std::left
 		          << name << std::right << std::setw(8) << result.verdict
