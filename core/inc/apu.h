@@ -72,7 +72,7 @@ class APU
 
 		bool m_powered = false;
 
-		// One pulse channel. CH2 reuses this once it is implemented.
+		// Pulse channel state (CH1 and CH2).
 		struct Pulse
 		{
 			bool enabled = false;
@@ -87,6 +87,7 @@ class APU
 		};
 
 		Pulse m_ch1;
+		Pulse m_ch2;
 
 		// Frame sequencer clock: one step every 8192 T-cycles (512 Hz).
 		u32 m_frame_counter = 0;
@@ -101,15 +102,19 @@ class APU
 
 		void push_sample(int16_t left, int16_t right);
 		void mix_and_emit();
+		void mix_channel(Channel channel, int& left, int& right) const;
 
 		void power_on();
 		void power_off();
 		void clear_registers();
 
-		void tick_ch1();
-		void trigger_ch1();
-		void update_ch1_frequency();
+		void tick_pulse(Pulse& channel);
+		void trigger_pulse(Pulse& channel, u8 duty_reg, u8 env_reg,
+			u16 frequency, bool dac_enabled);
+		u8 pulse_output(const Pulse& channel) const;
+
 		bool ch1_dac_enabled() const { return (m_nr12 & 0xF8) != 0; }
+		bool ch2_dac_enabled() const { return (m_nr22 & 0xF8) != 0; }
 };
 
 } // namespace qtreGB

@@ -13,6 +13,24 @@ constexpr u8 DUTY[4][8] = {
 	{0, 1, 1, 1, 1, 1, 1, 0},	// 75 %
 };
 
+u16 pulse_frequency(u8 low, u8 high)
+{
+	return static_cast<u16>(((high & 0x07) << 8) | low);
+}
+
+int16_t clamp_sample(int value)
+{
+	if(value > 32767)
+	{
+		return 32767;
+	}
+	if(value < -32768)
+	{
+		return -32768;
+	}
+	return static_cast<int16_t>(value);
+}
+
 } // namespace
 
 void APU::reset()
@@ -46,7 +64,8 @@ void APU::tick()
 		m_frame_step = static_cast<u8>((m_frame_step + 1) & 0x07);
 	}
 
-	tick_ch1();
+	tick_pulse(m_ch1);
+	tick_pulse(m_ch2);
 
 	// Nearest-neighbour resampling: emit one frame every CLOCK/SAMPLE_RATE
 	// T-cycles (about 87.38 at 48 kHz).
@@ -68,8 +87,10 @@ u8 APU::read(u16 address)
 	if(address == 0xFF26)
 	{
 		// Bits 6-4 are unused on the DMG and read as 1. Bits 3-0 report the
-		// channel status; only CH1 exists for now.
-		const u8 status = m_ch1.enabled ? 0x01 : 0x00;
+		// channel status; only the two pulse channels exist for now.
+		const u8 status = static_cast<u8>(
+			(m_ch1.enabled ? 0x01 : 0x00) |
+			(m_ch2.enabled ? 0x02 : 0x00));
 		return static_cast<u8>(0x70 | (m_powered ? 0x80 : 0x00) | status);
 	}
 
@@ -147,20 +168,41 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF13:
 			m_nr13 = value;
-			update_ch1_frequency();
+			m_ch1.frequency = pulse_frequency(m_nr13, m_nr14);
 			break;
 		case 0xFF14:
 			m_nr14 = static_cast<u8>(value & 0x47);
-			update_ch1_frequency();
+			m_ch1.frequency = pulse_frequency(m_nr13, m_nr14);
 			if((value & 0x80) != 0)
 			{
-				trigger_ch1();
+				trigger_pulse(m_ch1, m_nr11, m_nr12, m_ch1.frequency,
+					ch1_dac_enabled());
 			}
 			break;
-		case 0xFF16: m_nr21 = value; break;
-		case 0xFF17: m_nr22 = value; break;
-		case 0xFF18: m_nr23 = value; break;
-		case 0xFF19: m_nr24 = static_cast<u8>(value & 0x47); break;
+		case 0xFF16:
+			m_nr21 = value;
+			m_ch2.duty = static_cast<u8>((value >> 6) & 0x03);
+			break;
+		case 0xFF17:
+			m_nr22 = value;
+			if(!ch2_dac_enabled())
+			{
+				m_ch2.enabled = false;
+			}
+			break;
+		case 0xFF18:
+			m_nr23 = value;
+			m_ch2.frequency = pulse_frequency(m_nr23, m_nr24);
+			break;
+		case 0xFF19:
+			m_nr24 = static_cast<u8>(value & 0x47);
+			m_ch2.frequency = pulse_frequency(m_nr23, m_nr24);
+			if((value & 0x80) != 0)
+			{
+				trigger_pulse(m_ch2, m_nr21, m_nr22, m_ch2.frequency,
+					ch2_dac_enabled());
+			}
+			break;
 		case 0xFF1A: m_nr30 = static_cast<u8>(value & 0x80); break;
 		case 0xFF1B: m_nr31 = value; break;
 		case 0xFF1C: m_nr32 = static_cast<u8>(value & 0x60); break;
@@ -215,71 +257,105 @@ void APU::clear_registers()
 	m_nr51 = 0;
 
 	m_ch1 = Pulse{};
+	m_ch2 = Pulse{};
 }
 
 u8 APU::channel_output(Channel channel) const
 {
-	if(channel != CH1 || !m_ch1.enabled)
+	switch(channel)
 	{
-		return 0;
+		case CH1: return pulse_output(m_ch1);
+		case CH2: return pulse_output(m_ch2);
+		default: return 0;
 	}
-
-	return DUTY[m_ch1.duty & 0x03][m_ch1.duty_step & 0x07] ? m_ch1.volume : 0;
 }
 
 bool APU::is_channel_enabled(Channel channel) const
 {
-	return channel == CH1 && m_ch1.enabled;
+	switch(channel)
+	{
+		case CH1: return m_ch1.enabled;
+		case CH2: return m_ch2.enabled;
+		default: return false;
+	}
 }
 
-void APU::tick_ch1()
+u8 APU::pulse_output(const Pulse& channel) const
 {
-	if(!m_ch1.enabled)
+	if(!channel.enabled)
+	{
+		return 0;
+	}
+
+	return DUTY[channel.duty & 0x03][channel.duty_step & 0x07] ? channel.volume : 0;
+}
+
+void APU::tick_pulse(Pulse& channel)
+{
+	if(!channel.enabled)
 	{
 		return;
 	}
 
-	if(m_ch1.timer > 0)
+	if(channel.timer > 0)
 	{
-		--m_ch1.timer;
+		--channel.timer;
 	}
-	if(m_ch1.timer == 0)
+	if(channel.timer == 0)
 	{
-		m_ch1.timer = static_cast<int>((2048 - m_ch1.frequency) * 4);
-		m_ch1.duty_step = static_cast<u8>((m_ch1.duty_step + 1) & 0x07);
+		channel.timer = static_cast<int>((2048 - channel.frequency) * 4);
+		channel.duty_step = static_cast<u8>((channel.duty_step + 1) & 0x07);
 	}
 }
 
-void APU::trigger_ch1()
+void APU::trigger_pulse(Pulse& channel, u8 duty_reg, u8 env_reg,
+	u16 frequency, bool dac_enabled)
 {
-	m_ch1.duty = static_cast<u8>((m_nr11 >> 6) & 0x03);
-	update_ch1_frequency();
+	channel.duty = static_cast<u8>((duty_reg >> 6) & 0x03);
+	channel.frequency = frequency;
 
-	m_ch1.volume = static_cast<u8>(m_nr12 >> 4);
-	m_ch1.initial_volume = m_ch1.volume;
-	m_ch1.env_period = static_cast<u8>(m_nr12 & 0x07);
-	m_ch1.env_increase = (m_nr12 & 0x08) != 0;
+	channel.volume = static_cast<u8>(env_reg >> 4);
+	channel.initial_volume = channel.volume;
+	channel.env_period = static_cast<u8>(env_reg & 0x07);
+	channel.env_increase = (env_reg & 0x08) != 0;
 
-	m_ch1.timer = static_cast<int>((2048 - m_ch1.frequency) * 4);
-	m_ch1.enabled = ch1_dac_enabled();
-}
-
-void APU::update_ch1_frequency()
-{
-	m_ch1.frequency = static_cast<u16>(((m_nr14 & 0x07) << 8) | m_nr13);
+	channel.timer = static_cast<int>((2048 - frequency) * 4);
+	channel.enabled = dac_enabled;
 }
 
 void APU::mix_and_emit()
 {
-	// Milestone 4 (reduced): CH1 only. Center the 0..15 DAC value around 0 so
-	// an idle channel is silent and a playing one has no DC offset.
-	int sample = 0;
-	if(is_channel_enabled(CH1))
+	int left = 0;
+	int right = 0;
+
+	mix_channel(CH1, left, right);
+	mix_channel(CH2, left, right);
+
+	// NR50 master volume: 0 means 1/8 and 7 means 8/8.
+	left = left * (((m_nr50 >> 4) & 0x07) + 1) / 8;
+	right = right * ((m_nr50 & 0x07) + 1) / 8;
+
+	push_sample(clamp_sample(left * 1500), clamp_sample(right * 1500));
+}
+
+void APU::mix_channel(Channel channel, int& left, int& right) const
+{
+	if(!is_channel_enabled(channel))
 	{
-		sample = (7 - static_cast<int>(channel_output(CH1))) * 2000;
+		return;
 	}
 
-	push_sample(static_cast<int16_t>(sample), static_cast<int16_t>(sample));
+	// Center the 0..15 DAC value around 0 so an idle channel is silent and a
+	// playing one has no DC offset.
+	const int value = 7 - static_cast<int>(channel_output(channel));
+	if(m_nr51 & (1 << (4 + channel)))
+	{
+		left += value;
+	}
+	if(m_nr51 & (1 << channel))
+	{
+		right += value;
+	}
 }
 
 void APU::push_sample(int16_t left, int16_t right)
