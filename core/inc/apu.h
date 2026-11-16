@@ -41,6 +41,9 @@ class APU
 		u8 channel_output(Channel channel) const;
 		bool is_channel_enabled(Channel channel) const;
 
+		// Current envelope volume (0-15). CH3 has no envelope and returns 0.
+		u8 channel_volume(Channel channel) const;
+
 		// Stereo PCM produced by the mixer at SAMPLE_RATE.
 		size_t available_frames() const { return m_ring_count; }
 		size_t read_samples(int16_t* dst, size_t frames);
@@ -83,7 +86,10 @@ class APU
 			u8 volume = 0;			// 0..15
 			u8 initial_volume = 0;
 			u8 env_period = 0;
+			u8 env_timer = 0;
 			bool env_increase = false;
+			u16 length = 0;			// restante (máx. 64)
+			bool length_enable = false;
 		};
 
 		Pulse m_ch1;
@@ -114,6 +120,7 @@ class APU
 			u8 volume = 0;			// 0..15
 			u8 initial_volume = 0;
 			u8 env_period = 0;
+			u8 env_timer = 0;
 			bool env_increase = false;
 			u16 length = 0;			// restante (máx. 64)
 			bool length_enable = false;
@@ -137,6 +144,10 @@ class APU
 		void push_sample(int16_t left, int16_t right);
 		void mix_and_emit();
 		void mix_channel(Channel channel, int& left, int& right) const;
+
+		void clock_frame_sequencer();
+		bool clock_length(u16& length, bool enable);
+		void clock_envelope(u8& volume, u8& timer, u8 period, bool increase);
 
 		void power_on();
 		void power_off();

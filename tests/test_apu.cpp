@@ -700,3 +700,208 @@ TEST_CASE("APU: mixer includes CH4")
 	CHECK(buffer[0] == -12000);	// output 15 -> centered -8
 	CHECK(buffer[1] == -12000);
 }
+
+TEST_CASE("APU: CH1 length timer disables the channel at 256 Hz")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x3F);	// length = 1
+	apu.write(0xFF12, 0xF0);	// DAC on, envelope off
+	apu.write(0xFF14, 0xC0);	// trigger + length enable
+
+	CHECK(apu.is_channel_enabled(APU::CH1));
+
+	for(int i = 0; i < 8191; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH1));	// first length clock at 8192
+
+	apu.tick();
+	CHECK(apu.is_channel_enabled(APU::CH1) == false);
+	CHECK((apu.read(0xFF26) & 0x01) == 0x00);
+}
+
+TEST_CASE("APU: length is clocked every two frame-sequencer steps")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x3E);	// length = 2
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF14, 0xC0);
+
+	for(int i = 0; i < 8192; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH1));	// 2 -> 1
+
+	for(int i = 0; i < 8192; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH1));	// step 1, no clock
+
+	for(int i = 0; i < 8192; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH1) == false);	// 1 -> 0 at step 2
+}
+
+TEST_CASE("APU: length timer is ignored when disabled")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x3F);	// length = 1
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF14, 0x80);	// trigger only
+
+	for(int i = 0; i < 20000; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH1));
+}
+
+TEST_CASE("APU: trigger reloads an expired length timer")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x3F);	// length = 1
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF14, 0xC0);	// trigger + length enable
+
+	for(int i = 0; i < 8192; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH1) == false);
+
+	apu.write(0xFF14, 0xC0);	// length is 0 -> reload to 64
+	CHECK(apu.is_channel_enabled(APU::CH1));
+
+	for(int i = 0; i < 8192; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH1));	// 64 -> 63
+}
+
+TEST_CASE("APU: CH3 length timer disables the channel")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF1A, 0x80);
+	apu.write(0xFF1B, 0xFF);	// length = 1
+	apu.write(0xFF1E, 0xC0);	// trigger + length enable
+
+	CHECK(apu.is_channel_enabled(APU::CH3));
+	for(int i = 0; i < 8191; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH3));
+
+	apu.tick();
+	CHECK(apu.is_channel_enabled(APU::CH3) == false);
+}
+
+TEST_CASE("APU: CH4 length timer disables the channel")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF20, 0x3F);	// length = 1
+	apu.write(0xFF21, 0xF0);
+	apu.write(0xFF22, 0x00);
+	apu.write(0xFF23, 0xC0);	// trigger + length enable
+
+	CHECK(apu.is_channel_enabled(APU::CH4));
+	for(int i = 0; i < 8191; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.is_channel_enabled(APU::CH4));
+
+	apu.tick();
+	CHECK(apu.is_channel_enabled(APU::CH4) == false);
+}
+
+TEST_CASE("APU: CH1 envelope decreases at 64 Hz")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF12, 0xF1);	// volume 15, decrease, period 1
+	apu.write(0xFF14, 0x80);	// trigger, length disabled
+	CHECK(apu.channel_volume(APU::CH1) == 15);
+
+	for(int i = 0; i < 65535; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_volume(APU::CH1) == 15);	// first envelope tick at 65536
+
+	apu.tick();
+	CHECK(apu.channel_volume(APU::CH1) == 14);
+
+	for(int i = 0; i < 65536; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_volume(APU::CH1) == 13);
+}
+
+TEST_CASE("APU: envelope period 0 keeps the volume")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF12, 0xF0);	// volume 15, period 0
+	apu.write(0xFF14, 0x80);
+
+	for(int i = 0; i < 200000; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_volume(APU::CH1) == 15);
+}
+
+TEST_CASE("APU: CH1 envelope increases at 64 Hz")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF12, 0x09);	// volume 0, increase, period 1
+	apu.write(0xFF14, 0x80);
+	CHECK(apu.channel_volume(APU::CH1) == 0);
+
+	for(int i = 0; i < 65536; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_volume(APU::CH1) == 1);
+}
+
+TEST_CASE("APU: CH4 envelope decreases at 64 Hz")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF21, 0xF1);	// volume 15, decrease, period 1
+	apu.write(0xFF22, 0x00);
+	apu.write(0xFF23, 0x80);
+
+	CHECK(apu.channel_volume(APU::CH4) == 15);
+	for(int i = 0; i < 65536; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_volume(APU::CH4) == 14);
+}

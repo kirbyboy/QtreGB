@@ -64,7 +64,7 @@ void APU::tick()
 	if(++m_frame_counter >= 8192)
 	{
 		m_frame_counter = 0;
-		m_frame_step = static_cast<u8>((m_frame_step + 1) & 0x07);
+		clock_frame_sequencer();
 	}
 
 	tick_pulse(m_ch1);
@@ -79,6 +79,67 @@ void APU::tick()
 	{
 		m_sample_acc -= CLOCK;
 		mix_and_emit();
+	}
+}
+
+void APU::clock_frame_sequencer()
+{
+	// Length is clocked for all channels every two steps (256 Hz).
+	if(m_frame_step == 0 || m_frame_step == 2 ||
+		m_frame_step == 4 || m_frame_step == 6)
+	{
+		if(!clock_length(m_ch1.length, m_ch1.length_enable)) m_ch1.enabled = false;
+		if(!clock_length(m_ch2.length, m_ch2.length_enable)) m_ch2.enabled = false;
+		if(!clock_length(m_ch3.length, m_ch3.length_enable)) m_ch3.enabled = false;
+		if(!clock_length(m_ch4.length, m_ch4.length_enable)) m_ch4.enabled = false;
+	}
+
+	// CH1 frequency sweep is clocked at 128 Hz on steps 2 and 6.
+	// Not implemented yet.
+
+	// Volume envelope is clocked at 64 Hz on step 7.
+	if(m_frame_step == 7)
+	{
+		clock_envelope(m_ch1.volume, m_ch1.env_timer, m_ch1.env_period, m_ch1.env_increase);
+		clock_envelope(m_ch2.volume, m_ch2.env_timer, m_ch2.env_period, m_ch2.env_increase);
+		clock_envelope(m_ch4.volume, m_ch4.env_timer, m_ch4.env_period, m_ch4.env_increase);
+	}
+
+	m_frame_step = static_cast<u8>((m_frame_step + 1) & 0x07);
+}
+
+bool APU::clock_length(u16& length, bool enable)
+{
+	if(enable && length > 0)
+	{
+		--length;
+		return length != 0;
+	}
+	return true;
+}
+
+void APU::clock_envelope(u8& volume, u8& timer, u8 period, bool increase)
+{
+	if(period == 0)
+	{
+		return;
+	}
+
+	if(timer > 0)
+	{
+		--timer;
+	}
+	if(timer == 0)
+	{
+		timer = period;
+		if(increase && volume < 15)
+		{
+			++volume;
+		}
+		else if(!increase && volume > 0)
+		{
+			--volume;
+		}
 	}
 }
 
@@ -165,6 +226,7 @@ void APU::write(u16 address, u8 value)
 		case 0xFF11:
 			m_nr11 = value;
 			m_ch1.duty = static_cast<u8>((value >> 6) & 0x03);
+			m_ch1.length = static_cast<u16>(64 - (value & 0x3F));
 			break;
 		case 0xFF12:
 			m_nr12 = value;
@@ -180,6 +242,7 @@ void APU::write(u16 address, u8 value)
 		case 0xFF14:
 			m_nr14 = static_cast<u8>(value & 0x47);
 			m_ch1.frequency = channel_frequency(m_nr13, m_nr14);
+			m_ch1.length_enable = (value & 0x40) != 0;
 			if((value & 0x80) != 0)
 			{
 				trigger_pulse(m_ch1, m_nr11, m_nr12, m_ch1.frequency,
@@ -189,6 +252,7 @@ void APU::write(u16 address, u8 value)
 		case 0xFF16:
 			m_nr21 = value;
 			m_ch2.duty = static_cast<u8>((value >> 6) & 0x03);
+			m_ch2.length = static_cast<u16>(64 - (value & 0x3F));
 			break;
 		case 0xFF17:
 			m_nr22 = value;
@@ -204,6 +268,7 @@ void APU::write(u16 address, u8 value)
 		case 0xFF19:
 			m_nr24 = static_cast<u8>(value & 0x47);
 			m_ch2.frequency = channel_frequency(m_nr23, m_nr24);
+			m_ch2.length_enable = (value & 0x40) != 0;
 			if((value & 0x80) != 0)
 			{
 				trigger_pulse(m_ch2, m_nr21, m_nr22, m_ch2.frequency,
@@ -219,6 +284,7 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF1B:
 			m_nr31 = value;
+			m_ch3.length = static_cast<u16>(256 - value);
 			break;
 		case 0xFF1C:
 			m_nr32 = static_cast<u8>(value & 0x60);
@@ -231,6 +297,7 @@ void APU::write(u16 address, u8 value)
 		case 0xFF1E:
 			m_nr34 = static_cast<u8>(value & 0x47);
 			m_ch3.frequency = channel_frequency(m_nr33, m_nr34);
+			m_ch3.length_enable = (value & 0x40) != 0;
 			if((value & 0x80) != 0)
 			{
 				trigger_wave();
@@ -238,6 +305,7 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF20:
 			m_nr41 = static_cast<u8>(value & 0x3F);
+			m_ch4.length = static_cast<u16>(64 - (value & 0x3F));
 			break;
 		case 0xFF21:
 			m_nr42 = value;
@@ -254,6 +322,7 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF23:
 			m_nr44 = static_cast<u8>(value & 0x40);
+			m_ch4.length_enable = (value & 0x40) != 0;
 			if((value & 0x80) != 0)
 			{
 				trigger_noise();
@@ -333,6 +402,17 @@ bool APU::is_channel_enabled(Channel channel) const
 	}
 }
 
+u8 APU::channel_volume(Channel channel) const
+{
+	switch(channel)
+	{
+		case CH1: return m_ch1.volume;
+		case CH2: return m_ch2.volume;
+		case CH4: return m_ch4.volume;
+		default: return 0;
+	}
+}
+
 u8 APU::pulse_output(const Pulse& channel) const
 {
 	if(!channel.enabled)
@@ -371,6 +451,12 @@ void APU::trigger_pulse(Pulse& channel, u8 duty_reg, u8 env_reg,
 	channel.initial_volume = channel.volume;
 	channel.env_period = static_cast<u8>(env_reg & 0x07);
 	channel.env_increase = (env_reg & 0x08) != 0;
+	channel.env_timer = channel.env_period ? channel.env_period : 8;
+
+	if(channel.length == 0)
+	{
+		channel.length = 64;
+	}
 
 	channel.timer = static_cast<int>((2048 - frequency) * 4);
 	channel.enabled = dac_enabled;
@@ -415,6 +501,12 @@ void APU::trigger_wave()
 	m_ch3.sample_index = 0;
 	m_ch3.sample = 0;
 	m_ch3.timer = static_cast<int>((2048 - m_ch3.frequency) * 2);
+
+	if(m_ch3.length == 0)
+	{
+		m_ch3.length = 256;
+	}
+
 	m_ch3.enabled = ch3_dac_enabled();
 }
 
@@ -465,10 +557,16 @@ void APU::trigger_noise()
 	m_ch4.initial_volume = m_ch4.volume;
 	m_ch4.env_period = static_cast<u8>(m_nr42 & 0x07);
 	m_ch4.env_increase = (m_nr42 & 0x08) != 0;
+	m_ch4.env_timer = m_ch4.env_period ? m_ch4.env_period : 8;
 
 	m_ch4.clock_shift = static_cast<u8>((m_nr43 >> 4) & 0x0F);
 	m_ch4.divisor_code = static_cast<u8>(m_nr43 & 0x07);
 	m_ch4.short_mode = (m_nr43 & 0x08) != 0;
+
+	if(m_ch4.length == 0)
+	{
+		m_ch4.length = 64;
+	}
 
 	m_ch4.lfsr = 0x7FFF;
 
