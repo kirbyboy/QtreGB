@@ -16,7 +16,7 @@ constexpr u8 DUTY[4][8] = {
 // NR32 output level: 0 mutes, 1 is 100 %, 2 is 50 %, 3 is 25 %.
 constexpr u8 WAVE_SHIFT[4] = {4, 0, 1, 2};
 
-u16 channel_frequency(u8 low, u8 high)
+u16 frequency_from_registers(u8 low, u8 high)
 {
 	return static_cast<u16>(((high & 0x07) << 8) | low);
 }
@@ -32,6 +32,17 @@ int16_t clamp_sample(int value)
 		return -32768;
 	}
 	return static_cast<int16_t>(value);
+}
+
+// Pan Docs gives 0.999958 at 4194304 Hz; at 48 kHz this is
+// 0.999958^(4194304/48000) ~= 0.99634.
+constexpr float HPF_COEFFICIENT = 0.99634f;
+
+float high_pass(float in, float& capacitor)
+{
+	const float out = in - capacitor;
+	capacitor = in - out * HPF_COEFFICIENT;
+	return out;
 }
 
 } // namespace
@@ -52,6 +63,9 @@ void APU::reset()
 	m_ring_read = 0;
 	m_ring_write = 0;
 	m_ring_count = 0;
+
+	m_hpf_left = 0.0f;
+	m_hpf_right = 0.0f;
 }
 
 void APU::tick()
@@ -95,7 +109,10 @@ void APU::clock_frame_sequencer()
 	}
 
 	// CH1 frequency sweep is clocked at 128 Hz on steps 2 and 6.
-	// Not implemented yet.
+	if(m_frame_step == 2 || m_frame_step == 6)
+	{
+		clock_sweep();
+	}
 
 	// Volume envelope is clocked at 64 Hz on step 7.
 	if(m_frame_step == 7)
@@ -237,16 +254,17 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF13:
 			m_nr13 = value;
-			m_ch1.frequency = channel_frequency(m_nr13, m_nr14);
+			m_ch1.frequency = frequency_from_registers(m_nr13, m_nr14);
 			break;
 		case 0xFF14:
 			m_nr14 = static_cast<u8>(value & 0x47);
-			m_ch1.frequency = channel_frequency(m_nr13, m_nr14);
+			m_ch1.frequency = frequency_from_registers(m_nr13, m_nr14);
 			m_ch1.length_enable = (value & 0x40) != 0;
 			if((value & 0x80) != 0)
 			{
 				trigger_pulse(m_ch1, m_nr11, m_nr12, m_ch1.frequency,
 					ch1_dac_enabled());
+				trigger_sweep();
 			}
 			break;
 		case 0xFF16:
@@ -263,11 +281,11 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF18:
 			m_nr23 = value;
-			m_ch2.frequency = channel_frequency(m_nr23, m_nr24);
+			m_ch2.frequency = frequency_from_registers(m_nr23, m_nr24);
 			break;
 		case 0xFF19:
 			m_nr24 = static_cast<u8>(value & 0x47);
-			m_ch2.frequency = channel_frequency(m_nr23, m_nr24);
+			m_ch2.frequency = frequency_from_registers(m_nr23, m_nr24);
 			m_ch2.length_enable = (value & 0x40) != 0;
 			if((value & 0x80) != 0)
 			{
@@ -292,11 +310,11 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF1D:
 			m_nr33 = value;
-			m_ch3.frequency = channel_frequency(m_nr33, m_nr34);
+			m_ch3.frequency = frequency_from_registers(m_nr33, m_nr34);
 			break;
 		case 0xFF1E:
 			m_nr34 = static_cast<u8>(value & 0x47);
-			m_ch3.frequency = channel_frequency(m_nr33, m_nr34);
+			m_ch3.frequency = frequency_from_registers(m_nr33, m_nr34);
 			m_ch3.length_enable = (value & 0x40) != 0;
 			if((value & 0x80) != 0)
 			{
@@ -347,6 +365,8 @@ void APU::power_off()
 	clear_registers();
 	m_frame_counter = 0;
 	m_frame_step = 0;
+	m_hpf_left = 0.0f;
+	m_hpf_right = 0.0f;
 }
 
 void APU::clear_registers()
@@ -413,6 +433,17 @@ u8 APU::channel_volume(Channel channel) const
 	}
 }
 
+u16 APU::channel_frequency(Channel channel) const
+{
+	switch(channel)
+	{
+		case CH1: return m_ch1.frequency;
+		case CH2: return m_ch2.frequency;
+		case CH3: return m_ch3.frequency;
+		default: return 0;
+	}
+}
+
 u8 APU::pulse_output(const Pulse& channel) const
 {
 	if(!channel.enabled)
@@ -462,6 +493,67 @@ void APU::trigger_pulse(Pulse& channel, u8 duty_reg, u8 env_reg,
 	channel.enabled = dac_enabled;
 }
 
+void APU::trigger_sweep()
+{
+	m_ch1.shadow_frequency = m_ch1.frequency;
+	m_ch1.sweep_period = static_cast<u8>((m_nr10 >> 4) & 0x07);
+	m_ch1.sweep_shift = static_cast<u8>(m_nr10 & 0x07);
+	m_ch1.sweep_decrease = (m_nr10 & 0x08) != 0;
+	m_ch1.sweep_timer = m_ch1.sweep_period ? m_ch1.sweep_period : 8;
+	m_ch1.sweep_enabled = m_ch1.sweep_period != 0 || m_ch1.sweep_shift != 0;
+
+	if(m_ch1.sweep_shift != 0 && sweep_next_frequency() > 2047)
+	{
+		m_ch1.enabled = false;
+	}
+}
+
+int APU::sweep_next_frequency() const
+{
+	const int shadow = static_cast<int>(m_ch1.shadow_frequency);
+	const int delta = shadow >> (m_ch1.sweep_shift & 0x07);
+	return m_ch1.sweep_decrease ? shadow - delta : shadow + delta;
+}
+
+void APU::clock_sweep()
+{
+	if(!m_ch1.enabled || !m_ch1.sweep_enabled || m_ch1.sweep_period == 0)
+	{
+		return;
+	}
+
+	if(m_ch1.sweep_timer > 0)
+	{
+		--m_ch1.sweep_timer;
+	}
+	if(m_ch1.sweep_timer != 0)
+	{
+		return;
+	}
+	m_ch1.sweep_timer = m_ch1.sweep_period;
+
+	const int next = sweep_next_frequency();
+	if(next > 2047)
+	{
+		m_ch1.enabled = false;
+		return;
+	}
+	if(m_ch1.sweep_shift == 0)
+	{
+		return;
+	}
+
+	m_ch1.shadow_frequency = static_cast<u16>(next);
+	m_ch1.frequency = static_cast<u16>(next);
+	m_ch1.timer = static_cast<int>((2048 - m_ch1.frequency) * 4);
+
+	// Hardware performs a second overflow check without writing it back.
+	if(sweep_next_frequency() > 2047)
+	{
+		m_ch1.enabled = false;
+	}
+}
+
 u8 APU::wave_output() const
 {
 	if(!m_ch3.enabled)
@@ -495,7 +587,7 @@ void APU::tick_wave()
 
 void APU::trigger_wave()
 {
-	m_ch3.frequency = channel_frequency(m_nr33, m_nr34);
+	m_ch3.frequency = frequency_from_registers(m_nr33, m_nr34);
 	m_ch3.level = static_cast<u8>((m_nr32 >> 5) & 0x03);
 
 	m_ch3.sample_index = 0;
@@ -589,7 +681,12 @@ void APU::mix_and_emit()
 	left = left * (((m_nr50 >> 4) & 0x07) + 1) / 8;
 	right = right * ((m_nr50 & 0x07) + 1) / 8;
 
-	push_sample(clamp_sample(left * 1500), clamp_sample(right * 1500));
+	// Scale 1000 leaves headroom for the four channels (max |sum| is 32).
+	const float left_filtered = high_pass(static_cast<float>(left * 1000), m_hpf_left);
+	const float right_filtered = high_pass(static_cast<float>(right * 1000), m_hpf_right);
+
+	push_sample(clamp_sample(static_cast<int>(left_filtered)),
+		clamp_sample(static_cast<int>(right_filtered)));
 }
 
 void APU::mix_channel(Channel channel, int& left, int& right) const

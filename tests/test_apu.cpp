@@ -418,8 +418,8 @@ TEST_CASE("APU: mixer combines both pulse channels")
 
 	int16_t buffer[2];
 	REQUIRE(apu.read_samples(buffer, 1) == 1);
-	CHECK(buffer[0] == -24000);	// (-8) + (-8), 1500 per unit
-	CHECK(buffer[1] == -24000);
+	CHECK(buffer[0] == -16000);	// (-8) + (-8), 1000 per unit
+	CHECK(buffer[1] == -16000);
 }
 
 TEST_CASE("APU: NR51 pans the two pulse channels")
@@ -438,8 +438,8 @@ TEST_CASE("APU: NR51 pans the two pulse channels")
 
 	int16_t buffer[2];
 	REQUIRE(apu.read_samples(buffer, 1) == 1);
-	CHECK(buffer[0] == -12000);
-	CHECK(buffer[1] == 3000);
+	CHECK(buffer[0] == -8000);
+	CHECK(buffer[1] == 2000);
 }
 
 TEST_CASE("APU: NR50 scales the mixed output")
@@ -458,8 +458,8 @@ TEST_CASE("APU: NR50 scales the mixed output")
 
 	int16_t buffer[2];
 	REQUIRE(apu.read_samples(buffer, 1) == 1);
-	CHECK(buffer[0] == -3000);
-	CHECK(buffer[1] == -3000);
+	CHECK(buffer[0] == -2000);
+	CHECK(buffer[1] == -2000);
 }
 
 namespace
@@ -578,8 +578,8 @@ TEST_CASE("APU: mixer includes CH3")
 
 	int16_t buffer[2];
 	REQUIRE(apu.read_samples(buffer, 1) == 1);
-	CHECK(buffer[0] == -12000);	// sample 15 -> centered -8
-	CHECK(buffer[1] == -12000);
+	CHECK(buffer[0] == -8000);	// sample 15 -> centered -8
+	CHECK(buffer[1] == -8000);
 }
 
 namespace
@@ -697,8 +697,8 @@ TEST_CASE("APU: mixer includes CH4")
 
 	int16_t buffer[2];
 	REQUIRE(apu.read_samples(buffer, 1) == 1);
-	CHECK(buffer[0] == -12000);	// output 15 -> centered -8
-	CHECK(buffer[1] == -12000);
+	CHECK(buffer[0] == -8000);	// output 15 -> centered -8
+	CHECK(buffer[1] == -8000);
 }
 
 TEST_CASE("APU: CH1 length timer disables the channel at 256 Hz")
@@ -904,4 +904,130 @@ TEST_CASE("APU: CH4 envelope decreases at 64 Hz")
 		apu.tick();
 	}
 	CHECK(apu.channel_volume(APU::CH4) == 14);
+}
+
+TEST_CASE("APU: CH1 sweep increases the frequency at 128 Hz")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF10, 0x11);	// pace 1, add, shift 1
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF13, 0x00);
+	apu.write(0xFF14, 0x81);	// frequency 0x100, trigger
+	CHECK(apu.channel_frequency(APU::CH1) == 0x100);
+
+	for(int i = 0; i < 24576; ++i)	// frame sequencer step 2
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_frequency(APU::CH1) == 0x180);
+
+	for(int i = 0; i < 32768; ++i)	// frame sequencer step 6
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_frequency(APU::CH1) == 0x240);
+}
+
+TEST_CASE("APU: CH1 sweep subtracts frequency")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF10, 0x19);	// pace 1, subtract, shift 1
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF13, 0x00);
+	apu.write(0xFF14, 0x84);	// frequency 0x400, trigger
+	CHECK(apu.channel_frequency(APU::CH1) == 0x400);
+
+	for(int i = 0; i < 24576; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_frequency(APU::CH1) == 0x200);
+}
+
+TEST_CASE("APU: CH1 sweep disables on trigger overflow")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF10, 0x11);	// pace 1, add, shift 1
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF13, 0xFF);
+	apu.write(0xFF14, 0x87);	// frequency 0x7FF, trigger
+
+	CHECK(apu.is_channel_enabled(APU::CH1) == false);
+}
+
+TEST_CASE("APU: CH1 sweep disables on the second overflow check")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF10, 0x11);	// pace 1, add, shift 1
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF13, 0x00);
+	apu.write(0xFF14, 0x84);	// frequency 0x400, trigger
+	CHECK(apu.is_channel_enabled(APU::CH1));
+
+	for(int i = 0; i < 24576; ++i)
+	{
+		apu.tick();
+	}
+	// 0x400 -> 0x600 is valid, but the immediate second check gives 0x900.
+	CHECK(apu.is_channel_enabled(APU::CH1) == false);
+}
+
+TEST_CASE("APU: CH1 sweep with shift 0 keeps the frequency")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF10, 0x10);	// pace 1, add, shift 0
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF13, 0x00);
+	apu.write(0xFF14, 0x81);	// frequency 0x100
+
+	for(int i = 0; i < 24576; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_frequency(APU::CH1) == 0x100);
+	CHECK(apu.is_channel_enabled(APU::CH1));
+}
+
+TEST_CASE("APU: high-pass filter removes a constant DC offset")
+{
+	APU apu;
+	power_on(apu);
+
+	for(int i = 0; i < 16; ++i)
+	{
+		apu.write(static_cast<u16>(0xFF30 + i), 0xFF);
+	}
+	apu.write(0xFF1A, 0x80);
+	apu.write(0xFF1C, 0x20);
+	apu.write(0xFF1D, 0xFF);
+	apu.write(0xFF1E, 0x87);	// frequency 0x7FF, trigger
+
+	for(int i = 0; i < 88; ++i)
+	{
+		apu.tick();
+	}
+	int16_t first[2];
+	REQUIRE(apu.read_samples(first, 1) == 1);
+	CHECK(first[0] == -8000);	// first sample sees an empty capacitor
+	CHECK(first[1] == -8000);
+
+	for(int i = 0; i < 400000; ++i)
+	{
+		apu.tick();
+	}
+	int16_t buffer[8192];
+	const size_t frames = apu.read_samples(buffer, 4096);
+	REQUIRE(frames == 4096);
+	CHECK(buffer[(frames - 1) * 2 + 0] == 0);
+	CHECK(buffer[(frames - 1) * 2 + 1] == 0);
 }

@@ -44,6 +44,9 @@ class APU
 		// Current envelope volume (0-15). CH3 has no envelope and returns 0.
 		u8 channel_volume(Channel channel) const;
 
+		// Current 11-bit period value. CH4 has no frequency and returns 0.
+		u16 channel_frequency(Channel channel) const;
+
 		// Stereo PCM produced by the mixer at SAMPLE_RATE.
 		size_t available_frames() const { return m_ring_count; }
 		size_t read_samples(int16_t* dst, size_t frames);
@@ -90,6 +93,14 @@ class APU
 			bool env_increase = false;
 			u16 length = 0;			// restante (máx. 64)
 			bool length_enable = false;
+
+			// CH1 sweep state (unused by CH2).
+			u16 shadow_frequency = 0;
+			u8 sweep_period = 0;
+			u8 sweep_shift = 0;
+			u8 sweep_timer = 0;
+			bool sweep_decrease = false;
+			bool sweep_enabled = false;
 		};
 
 		Pulse m_ch1;
@@ -141,6 +152,10 @@ class APU
 		size_t m_ring_write = 0;
 		size_t m_ring_count = 0;
 
+		// High-pass filter state, one capacitor per output side.
+		float m_hpf_left = 0.0f;
+		float m_hpf_right = 0.0f;
+
 		void push_sample(int16_t left, int16_t right);
 		void mix_and_emit();
 		void mix_channel(Channel channel, int& left, int& right) const;
@@ -157,6 +172,10 @@ class APU
 		void trigger_pulse(Pulse& channel, u8 duty_reg, u8 env_reg,
 			u16 frequency, bool dac_enabled);
 		u8 pulse_output(const Pulse& channel) const;
+
+		void trigger_sweep();
+		void clock_sweep();
+		int sweep_next_frequency() const;
 
 		void tick_wave();
 		void trigger_wave();
