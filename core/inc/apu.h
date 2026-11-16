@@ -104,6 +104,25 @@ class APU
 
 		Wave m_ch3;
 
+		// Noise channel state (CH4).
+		struct Noise
+		{
+			bool enabled = false;
+			int timer = 0;			// T-cycles until the next LFSR clock
+			u16 lfsr = 0x7FFF;
+			bool short_mode = false;	// 7-bit instead of 15-bit
+			u8 volume = 0;			// 0..15
+			u8 initial_volume = 0;
+			u8 env_period = 0;
+			bool env_increase = false;
+			u16 length = 0;			// restante (máx. 64)
+			bool length_enable = false;
+			u8 clock_shift = 0;
+			u8 divisor_code = 0;
+		};
+
+		Noise m_ch4;
+
 		// Frame sequencer clock: one step every 8192 T-cycles (512 Hz).
 		u32 m_frame_counter = 0;
 		u8 m_frame_step = 0;
@@ -132,9 +151,14 @@ class APU
 		void trigger_wave();
 		u8 wave_output() const;
 
+		void tick_noise();
+		void trigger_noise();
+		u8 noise_output() const;
+
 		bool ch1_dac_enabled() const { return (m_nr12 & 0xF8) != 0; }
 		bool ch2_dac_enabled() const { return (m_nr22 & 0xF8) != 0; }
 		bool ch3_dac_enabled() const { return (m_nr30 & 0x80) != 0; }
+		bool ch4_dac_enabled() const { return (m_nr42 & 0xF8) != 0; }
 };
 
 } // namespace qtreGB

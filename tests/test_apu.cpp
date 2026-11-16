@@ -97,7 +97,7 @@ TEST_CASE("APU: unused register bits read as one")
 	CHECK(apu.read(0xFF20) == 0xFF);	// bits 7-6 unused
 
 	apu.write(0xFF22, 0xFF);
-	CHECK(apu.read(0xFF22) == 0xFF);	// bit 3 unused
+	CHECK(apu.read(0xFF22) == 0xFF);	// shift/width/divider
 
 	apu.write(0xFF23, 0xFF);
 	CHECK(apu.read(0xFF23) == 0x7F);	// trigger reads 0, bits 5-0 unused
@@ -579,5 +579,124 @@ TEST_CASE("APU: mixer includes CH3")
 	int16_t buffer[2];
 	REQUIRE(apu.read_samples(buffer, 1) == 1);
 	CHECK(buffer[0] == -12000);	// sample 15 -> centered -8
+	CHECK(buffer[1] == -12000);
+}
+
+namespace
+{
+void trigger_ch4(APU& apu, u8 volume, u8 nr43)
+{
+	apu.write(0xFF21, static_cast<u8>(volume << 4));
+	apu.write(0xFF22, nr43);
+	apu.write(0xFF23, 0x80);	// trigger
+}
+}
+
+TEST_CASE("APU: CH4 trigger requires an enabled DAC")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF21, 0x00);	// DAC off
+	apu.write(0xFF22, 0x00);
+	apu.write(0xFF23, 0x80);	// trigger
+	CHECK(apu.channel_output(APU::CH4) == 0);
+	CHECK((apu.read(0xFF26) & 0x08) == 0x00);
+
+	apu.write(0xFF21, 0xF0);	// DAC on, volume 15
+	apu.write(0xFF23, 0x80);	// trigger again
+	CHECK(apu.channel_output(APU::CH4) == 15);
+	CHECK((apu.read(0xFF26) & 0x08) == 0x08);
+}
+
+TEST_CASE("APU: CH4 LFSR produces both output levels")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch4(apu, 15, 0x00);	// 15-bit LFSR, 8 T-cycles per step
+
+	bool low = false;
+	bool high = false;
+	for(int step = 0; step < 200; ++step)
+	{
+		if(apu.channel_output(APU::CH4) == 0)
+		{
+			low = true;
+		}
+		else
+		{
+			high = true;
+		}
+
+		for(int i = 0; i < 8; ++i)
+		{
+			apu.tick();
+		}
+	}
+
+	CHECK(low);
+	CHECK(high);
+}
+
+TEST_CASE("APU: CH4 clock shift 14 stops the LFSR")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch4(apu, 15, 0xE0);	// shift 14
+
+	CHECK(apu.channel_output(APU::CH4) == 15);
+	for(int i = 0; i < 1000; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_output(APU::CH4) == 15);
+}
+
+TEST_CASE("APU: turning the CH4 DAC off disables the channel")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch4(apu, 15, 0x00);
+	CHECK((apu.read(0xFF26) & 0x08) == 0x08);
+
+	apu.write(0xFF21, 0x00);
+	CHECK(apu.channel_output(APU::CH4) == 0);
+	CHECK((apu.read(0xFF26) & 0x08) == 0x00);
+}
+
+TEST_CASE("APU: NR52 reports CH4 and power off disables it")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch4(apu, 15, 0x00);
+	CHECK((apu.read(0xFF26) & 0x08) == 0x08);
+
+	apu.write(0xFF26, 0x00);
+	CHECK((apu.read(0xFF26) & 0x08) == 0x00);
+	CHECK(apu.channel_output(APU::CH4) == 0);
+}
+
+TEST_CASE("APU: NR43 keeps all eight bits")
+{
+	APU apu;
+	power_on(apu);
+	apu.write(0xFF22, 0xA5);
+	CHECK(apu.read(0xFF22) == 0xA5);
+}
+
+TEST_CASE("APU: mixer includes CH4")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch4(apu, 15, 0x00);
+
+	for(int i = 0; i < 88; ++i)
+	{
+		apu.tick();
+	}
+
+	int16_t buffer[2];
+	REQUIRE(apu.read_samples(buffer, 1) == 1);
+	CHECK(buffer[0] == -12000);	// output 15 -> centered -8
 	CHECK(buffer[1] == -12000);
 }
