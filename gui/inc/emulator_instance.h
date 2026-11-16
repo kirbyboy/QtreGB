@@ -48,7 +48,7 @@ class EmulatorInstance
 		void release_button(u8 button);
 		bool is_button_pressed(u8 button) const;
 
-		void load_cart(std::vector<u8> cart);
+		void load_cart(std::vector<u8> cart, std::string rom_path = {});
 		// Stores a boot ROM. It is applied on the next load_cart()/reset().
 		bool load_boot_rom(std::vector<u8> boot_rom);
 		void reset();
@@ -66,11 +66,15 @@ class EmulatorInstance
 		std::unique_ptr<QtreGB> m_emulator;
 		std::vector<u8> m_cart;
 		std::vector<u8> m_boot_rom;
+		std::string m_rom_path;
 		u8 m_buttonState[8] = {1,1,1,1,1,1,1,1};
 		bool m_is_frame_ready;
 		bool m_is_emulator_ready;
 
 		bool init_audio();
+		void rebuild_machine();
+		void save_battery();
+		void load_battery();
 		void set_button(u8 button, bool released);
 		void fill_rect(int x, int y, int w, int h, u32 color);
 

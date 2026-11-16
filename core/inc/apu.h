@@ -8,6 +8,8 @@
 namespace qtreGB
 {
 
+class TaggedSerializer;
+
 // DMG APU. Milestone 3: register file, power state and the CH1 pulse
 // generator (timer, duty and fixed volume). The mixer, the ring buffer and the
 // remaining channels are added in later milestones.
@@ -28,8 +30,13 @@ class APU
 
 		void reset();
 
-		// Advances the APU by one T-cycle.
-		void tick();
+		// Prepares the wave-RAM access window for the current T-cycle. Must be
+		// called before the CPU runs so same-cycle wave-RAM accesses work.
+		void prepare_tick();
+
+		// Advances the APU by one T-cycle. The 16-bit divider drives the
+		// frame sequencer through the falling edge of its bit 12.
+		void tick(u16 div);
 
 		u8 read(u16 address);
 		void write(u16 address, u8 value);
@@ -50,6 +57,12 @@ class APU
 		// Stereo PCM produced by the mixer at SAMPLE_RATE.
 		size_t available_frames() const { return m_ring_count; }
 		size_t read_samples(int16_t* dst, size_t frames);
+
+		// Digital PCM values (CGB PCM12/PCM34 layout), useful for tests.
+		u8 pcm12() const;
+		u8 pcm34() const;
+
+		void serialize(TaggedSerializer& s);
 
 	private:
 		// Registers FF10-FF25. NR52 is not stored: m_powered is its bit 7.
@@ -86,10 +99,13 @@ class APU
 			u8 duty_step = 0;		// 0..7
 			u16 frequency = 0;		// 0..2047
 			int timer = 0;			// T-cycles until the next duty step
+			u8 trigger_delay = 0;	// T-cycles to skip right after a trigger
 			u8 volume = 0;			// 0..15
 			u8 initial_volume = 0;
 			u8 env_period = 0;
-			u8 env_timer = 0;
+			u8 env_timer = 0;		// 3-bit volume countdown (0..7)
+			bool env_reloaded = false;
+			bool env_pending = false;
 			bool env_increase = false;
 			u16 length = 0;			// restante (máx. 64)
 			bool length_enable = false;
@@ -101,6 +117,9 @@ class APU
 			u8 sweep_timer = 0;
 			bool sweep_decrease = false;
 			bool sweep_enabled = false;
+			bool sweep_negate_used = false;
+
+			void serialize(TaggedSerializer& s);
 		};
 
 		Pulse m_ch1;
@@ -111,12 +130,24 @@ class APU
 		{
 			bool enabled = false;
 			u16 frequency = 0;		// 0..2047
-			int timer = 0;			// T-cycles until the next sample
+			int timer = 0;			// odd ticks until the next sample
+			u8 trigger_delay = 0;	// odd ticks to skip after a trigger
 			u8 sample_index = 0;	// 0..31
 			u8 sample = 0;			// 0..15
 			u8 level = 0;			// NR32 bits 6-5
 			u16 length = 0;			// restante (máx. 256)
 			bool length_enable = false;
+
+			// DMG wave-RAM access window: the CPU may only touch wave RAM on
+			// the T-cycles after CH3 reads a byte, and then only that byte.
+			bool access_window = false;
+			u8 access_byte = 0;
+			u8 sampled_byte = 0;
+			u8 window_ttl = 0;
+			u32 last_sample_cycle = 0;
+			bool sample_valid = false;
+
+			void serialize(TaggedSerializer& s);
 		};
 
 		Wave m_ch3;
@@ -131,19 +162,27 @@ class APU
 			u8 volume = 0;			// 0..15
 			u8 initial_volume = 0;
 			u8 env_period = 0;
-			u8 env_timer = 0;
+			u8 env_timer = 0;		// 3-bit volume countdown (0..7)
+			bool env_reloaded = false;
+			bool env_pending = false;
 			bool env_increase = false;
 			u16 length = 0;			// restante (máx. 64)
 			bool length_enable = false;
 			u8 clock_shift = 0;
 			u8 divisor_code = 0;
+
+			void serialize(TaggedSerializer& s);
 		};
 
 		Noise m_ch4;
 
-		// Frame sequencer clock: one step every 8192 T-cycles (512 Hz).
-		u32 m_frame_counter = 0;
+		// Frame sequencer clock: steps on the falling edge of DIV bit 12.
+		u16 m_last_div = 0;
 		u8 m_frame_step = 0;
+
+		// T-cycle phase (0..3); CH3 samples on odd phases, like DocBoy/hardware.
+		u8 m_apu_phase = 0;
+		u32 m_cycle = 0;
 
 		// Resampling from CLOCK to SAMPLE_RATE and stereo ring buffer.
 		u32 m_sample_acc = 0;
@@ -162,7 +201,20 @@ class APU
 
 		void clock_frame_sequencer();
 		bool clock_length(u16& length, bool enable);
-		void clock_envelope(u8& volume, u8& timer, u8 period, bool increase);
+		void clock_extra_length(u16& length, bool& length_enable,
+			bool new_enable, bool& channel_enabled, bool trigger);
+
+		// Volume envelope: a 3-bit countdown decremented at 64 Hz (frame step
+		// 7). The pace is reloaded from NRX2 on the rising edge of DIV bit 12,
+		// and the pending volume update is applied on the next event.
+		void clock_envelope(Pulse& channel);
+		void clock_envelope(Noise& channel);
+		void reload_envelope(Pulse& channel, u8 period);
+		void reload_envelope(Noise& channel, u8 period);
+		void latch_envelope(Pulse& channel);
+		void latch_envelope(Noise& channel);
+		void update_envelope(Pulse& channel);
+		void update_envelope(Noise& channel);
 
 		void power_on();
 		void power_off();

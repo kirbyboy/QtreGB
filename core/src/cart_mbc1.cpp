@@ -63,13 +63,10 @@ u8 CartMBC1::read(u16 address)
 	}
 	else if(address >= 0xA000 && address < 0xC000)
 	{
-		if(m_ram_enable && m_ram.size() > 0)
+		if(m_ram_enable && !m_ram.empty())
 		{
-			u8 ram_bank = m_rom_ram_bank;
-			if(ram_bank <= m_ram.size())
-			{
-				return m_ram[ram_bank].read(address - 0xA000);
-			}
+			const size_t ram_bank = m_rom_ram_bank % m_ram.size();
+			return m_ram[ram_bank].read(address - 0xA000);
 		}
 		return 0xFF;
 	}
@@ -130,13 +127,10 @@ void CartMBC1::write(u16 address, u8 value)
 	}
 	else if(address >= 0xA000 && address < 0xC000)
 	{
-		if(m_ram_enable && m_ram.size() > 0)
+		if(m_ram_enable && !m_ram.empty())
 		{
-			u8 ram_bank = m_rom_ram_bank;
-			if(ram_bank <= m_ram.size())
-			{
-				m_ram[ram_bank].write(address - 0xA000, value);
-			}
+			const size_t ram_bank = m_rom_ram_bank % m_ram.size();
+			m_ram[ram_bank].write(address - 0xA000, value);
 		}
 	}
 }

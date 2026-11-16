@@ -18,6 +18,9 @@ class Timer
 
 		// --- MMIO register port (HW semantics) ---
 		u8 read_div();
+		// Full 16-bit internal divider. The APU frame sequencer is clocked by
+		// the falling edge of its bit 12 (bit 4 of FF04).
+		u16 read_div16() const { return m_div; }
 		void write_div();	// on HW any write resets the divider
 		u8 read_tima();
 		void write_tima(u8 value);

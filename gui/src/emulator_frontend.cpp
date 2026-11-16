@@ -48,6 +48,7 @@ void EmulatorFrontend::draw_main_window()
     {
 		if (ImGui::BeginMenu("File"))
 		{
+			/*
 			if (ImGui::MenuItem("Open ROM..."))
 			{
 				std::string filename = "../roms/01-special.gb"; // your file dialog function
@@ -68,7 +69,7 @@ void EmulatorFrontend::draw_main_window()
 						m_emulator->load_cart(rom);
 					}
 				}
-			}
+			}*/
 			if (ImGui::MenuItem("Open ROM..."))
 			{
 				std::string filename = open_rom_dialog();
@@ -86,7 +87,7 @@ void EmulatorFrontend::draw_main_window()
 						myfile.read(reinterpret_cast<char*>(&rom.front()), static_cast<std::size_t>(file_size));
 						myfile.close();
 
-						m_emulator->load_cart(rom);
+						m_emulator->load_cart(rom, filename);
 					}
 				}
 			}

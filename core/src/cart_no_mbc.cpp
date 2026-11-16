@@ -26,9 +26,14 @@ std::vector<Memory> &NoMBCCart::get_ram()
 
 void NoMBCCart::set_ram_banks(u8 banks)
 {
-	if(banks > 1)	// Only 1 bank is allowed for no mbc carts
+	// No-MBC cartridges expose at most one 8KB RAM bank.
+	if(banks > 0)
 	{
-		m_ram = vector<Memory>(banks, Memory(0x2000));
+		m_ram = vector<Memory>(1, Memory(0x2000));
+	}
+	else
+	{
+		m_ram.clear();
 	}
 }
 
@@ -38,7 +43,7 @@ u8 NoMBCCart::read(u16 address)
 	{
 		return m_rom[address];
 	}
-	else if(address >= 0xA000 && address < 0xE000 && m_ram.size() > 0)
+	else if(address >= 0xA000 && address < 0xC000 && m_ram.size() > 0)
 	{
 		return m_ram[0].read(address - 0xA000);
 	}

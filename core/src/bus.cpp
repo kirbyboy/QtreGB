@@ -2,6 +2,8 @@
 #include "apu.h"
 #include "QtreGB.h"
 
+#include <cstdlib>
+
 using namespace qtreGB;
 
 Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Memory* hram, IO* io, LCD* lcd, PPU* ppu, APU* apu, ICPURegisters* cpu_registers)
@@ -103,6 +105,13 @@ u8 Bus::read(u16 address)
 		else if(address >= 0xFF10 && address <= 0xFF3F)
 		{
 			return m_apu->read(address);
+		}
+		// CGB PCM registers, exposed for SameSuite-style tests. On DMG they
+		// are normally absent; the environment gate keeps DMG behavior intact.
+		else if((address == 0xFF76 || address == 0xFF77) &&
+			std::getenv("QTR_PCM_DEBUG") != nullptr)
+		{
+			return address == 0xFF76 ? m_apu->pcm12() : m_apu->pcm34();
 		}
 		else if(address >= 0xFF40 && address <= 0xFF4B)
 		{

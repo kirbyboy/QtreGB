@@ -160,6 +160,9 @@ void QtreGB::tick_once()
 			}
 		#endif
 	}
+	// The CPU must see the current wave-RAM access window when it runs.
+	m_apu.prepare_tick();
+
 	// Timer: one tick per M-cycle, after the CPU T3.
 	m_cpu.tick();
 	if(m_clock.get() == Phase::T3)
@@ -167,7 +170,7 @@ void QtreGB::tick_once()
 		m_timer.timer_tick();
 	}
 	m_ppu.ppu_tick();
-	m_apu.tick();
+	m_apu.tick(m_timer.read_div16());
 
 	if(m_cpu.is_end_m_cycle())
 	{

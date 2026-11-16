@@ -7,7 +7,7 @@ both are the only implementations — there are no selection flags.
 
 ## Build & test
 - `make -j$(nproc)` → `build/QtreGB-GUI` (C++17, `-O0 -g`, `-Wall -Wextra -Wpedantic`).
-- `make run_tests` → doctest suite in `tests/` (80 cases, 386 assertions).
+- `make run_tests` → doctest suite in `tests/` (143 cases, 683 assertions).
 - `make run_blargg` (15) · `make run_mts` (34).
 - PPU acceptance ROMs are **not** wired into `mts/Makefile`; run them manually:
   `./build/mts_runner vendor/mts/*/acceptance/ppu/*.gb` → 12/12.
@@ -36,6 +36,23 @@ both are the only implementations — there are no selection flags.
   bus ownership.
 - `core/inc/timer.h` + `core/src/timer.cpp`: DocBoy-style timer, one tick per
   M-cycle at T3.
+- `core/inc/apu.h` + `core/src/apu.cpp`: APU register file, NR52 power state,
+  frame-sequencer clock, all four generators (CH1/CH2 pulse, CH3 wave, CH4
+  noise), length/envelope, CH1 sweep, a stereo mixer with NR50/NR51 and HPF,
+  and a 48 kHz ring buffer. The frame sequencer is clocked by DIV bit 12
+  (`Timer::read_div16()` → `APU::tick(div)`). The GUI drains the buffer to SDL
+  (`EmulatorInstance::drain_audio`). `dmg_sound` is at 12/12. NRX2 writes
+  implement the CGB-E zombie-mode glitch table (CH1/CH2/CH4), and pulse channels
+  apply DocBoy's retrigger delay. SameSuite `div_write_trigger`,
+  `div_write_trigger_10`, `channel_1/2_nrx2_glitch` and `*_restart_nrx2_glitch`
+  pass with `QTR_PCM_DEBUG=1` (17/70 APU ROMs; the rest encode CGB-E-only
+  behavior). `APU::serialize`
+  covers registers, channel state, DIV phase, resampler and HPF state (the PCM
+  ring is deliberately excluded). A full machine savestate still needs the
+  PPU/LCD/cart/DMA parts (see `documentation/Game Boy/apu-plan.md`).
+- `core/inc/cart.h` + MBC1/no-MBC cartridges: battery-backed RAM is saved to
+  `<rom>.sav` next to the ROM (all RAM banks, raw concatenation). The GUI saves
+  on ROM switch/reset/close and loads it when a battery cartridge starts.
 - `core/inc/QtreGB.h` + `core/src/QtreGB.cpp`: machine wiring (`Cpu = CpuMicro`,
   `PPU`).
 - The DocBoy PPU oracle was removed after reaching parity; it remains in Git

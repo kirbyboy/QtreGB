@@ -215,13 +215,13 @@ TEST_CASE("Bus: FF10-FF3F route to the APU")
 	CHECK(env.bus.read(0xFF26) == 0xF0);
 
 	env.bus.write(0xFF11, 0x80);
-	CHECK(env.bus.read(0xFF11) == 0x80);
+	CHECK(env.bus.read(0xFF11) == 0xBF);
 
 	env.bus.write(0xFF30, 0xA5);
 	CHECK(env.bus.read(0xFF30) == 0xA5);
 
 	env.bus.write(0xFF26, 0x00);
-	CHECK(env.bus.read(0xFF11) == 0x00);
+	CHECK(env.bus.read(0xFF11) == 0x3F);
 	CHECK(env.bus.read(0xFF26) == 0x70);
 }
 

@@ -23,6 +23,8 @@ m_is_emulator_ready(false)
 
 EmulatorInstance::~EmulatorInstance()
 {
+	save_battery();
+
 	if(m_audio_device != 0)
 	{
 		SDL_CloseAudioDevice(m_audio_device);
@@ -140,10 +142,12 @@ bool EmulatorInstance::is_button_pressed(u8 button) const
 	return false;
 }
 
-void EmulatorInstance::load_cart(std::vector<u8> cart)
+void EmulatorInstance::load_cart(std::vector<u8> cart, std::string rom_path)
 {
+	save_battery();
 	m_cart = std::move(cart);
-	reset();
+	m_rom_path = std::move(rom_path);
+	rebuild_machine();
 }
 
 bool EmulatorInstance::load_boot_rom(std::vector<u8> boot_rom)
@@ -157,6 +161,12 @@ bool EmulatorInstance::load_boot_rom(std::vector<u8> boot_rom)
 }
 
 void EmulatorInstance::reset()
+{
+	save_battery();
+	rebuild_machine();
+}
+
+void EmulatorInstance::rebuild_machine()
 {
 	if(m_audio_device != 0)
 	{
@@ -172,7 +182,26 @@ void EmulatorInstance::reset()
 	{
 		m_emulator->load_cart(m_cart);
 	}
+	load_battery();
 	m_is_emulator_ready = !m_cart.empty();
+}
+
+void EmulatorInstance::save_battery()
+{
+	if(!m_emulator || m_rom_path.empty())
+	{
+		return;
+	}
+	m_emulator->m_cart.save_battery_ram(Cart::battery_save_path(m_rom_path));
+}
+
+void EmulatorInstance::load_battery()
+{
+	if(!m_emulator || m_rom_path.empty())
+	{
+		return;
+	}
+	m_emulator->m_cart.load_battery_ram(Cart::battery_save_path(m_rom_path));
 }
 
 void EmulatorInstance::tick()
