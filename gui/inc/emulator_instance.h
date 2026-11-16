@@ -56,10 +56,12 @@ class EmulatorInstance
 		bool boot_rom_active() const { return m_emulator->has_boot_rom(); }
 		void tick();
 		bool get_frame_ready();
+		void drain_audio();
 
 	private:
 		IGuiBackend* m_backend = nullptr;
 		void* m_texture_id = nullptr;
+		SDL_AudioDeviceID m_audio_device = 0;
 		std::vector<u32> m_frame_buffer;
 		std::unique_ptr<QtreGB> m_emulator;
 		std::vector<u8> m_cart;
@@ -68,6 +70,7 @@ class EmulatorInstance
 		bool m_is_frame_ready;
 		bool m_is_emulator_ready;
 
+		bool init_audio();
 		void set_button(u8 button, bool released);
 		void fill_rect(int x, int y, int w, int h, u32 color);
 

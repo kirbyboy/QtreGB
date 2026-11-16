@@ -120,3 +120,226 @@ TEST_CASE("APU: tick keeps the register file stable")
 	CHECK(apu.read(0xFF13) == 0x34);
 	CHECK(apu.read(0xFF26) == 0xF0);
 }
+
+namespace
+{
+void power_on(APU& apu)
+{
+	apu.reset();
+	apu.write(0xFF26, 0x80);
+}
+
+void trigger_ch1(APU& apu, u8 duty, u8 volume, u16 frequency)
+{
+	apu.write(0xFF11, static_cast<u8>(duty << 6));
+	apu.write(0xFF12, static_cast<u8>(volume << 4));
+	apu.write(0xFF13, static_cast<u8>(frequency & 0xFF));
+	apu.write(0xFF14, static_cast<u8>(0x80 | ((frequency >> 8) & 0x07)));
+}
+}
+
+TEST_CASE("APU: CH1 trigger requires an enabled DAC")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF12, 0x00);	// DAC off
+	apu.write(0xFF14, 0x87);	// trigger
+	CHECK(apu.channel_output(APU::CH1) == 0);
+	CHECK((apu.read(0xFF26) & 0x01) == 0x00);
+
+	apu.write(0xFF12, 0xF0);	// DAC on, volume 15
+	apu.write(0xFF14, 0x87);	// trigger again
+	CHECK((apu.read(0xFF26) & 0x01) == 0x01);
+}
+
+TEST_CASE("APU: CH1 duty step advances at the channel period")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0xC0);	// duty 3 (75 %)
+	apu.write(0xFF12, 0xF0);	// volume 15
+	apu.write(0xFF13, 0xFF);
+	apu.write(0xFF14, 0x87);	// frequency = 0x7FF -> 4 T-cycles per step
+
+	CHECK(apu.channel_output(APU::CH1) == 0);	// step 0 is low
+
+	const u8 expected[8] = {15, 15, 15, 15, 15, 15, 0, 0};
+	for(int step = 1; step <= 8; ++step)
+	{
+		for(int i = 0; i < 4; ++i)
+		{
+			apu.tick();
+		}
+		CHECK(apu.channel_output(APU::CH1) == expected[step - 1]);
+	}
+}
+
+TEST_CASE("APU: CH1 period comes from the frequency registers")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x80);	// duty 2 (50 %): step 0 is high
+	apu.write(0xFF12, 0x90);	// volume 9
+	apu.write(0xFF13, 0x00);
+	apu.write(0xFF14, 0x80);	// frequency = 0 -> 8192 T-cycles per step
+
+	CHECK(apu.channel_output(APU::CH1) == 9);
+
+	for(int i = 0; i < 8191; ++i)
+	{
+		apu.tick();
+	}
+	CHECK(apu.channel_output(APU::CH1) == 9);	// still on step 0
+
+	apu.tick();	// 8192nd tick advances to step 1
+	CHECK(apu.channel_output(APU::CH1) == 0);	// step 1 is low
+}
+
+TEST_CASE("APU: CH1 volume is reloaded on trigger")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x80);	// duty 2: step 0 is high
+	apu.write(0xFF12, 0x50);	// volume 5
+	apu.write(0xFF13, 0xFF);
+	apu.write(0xFF14, 0x87);	// frequency = 0x7FF, trigger
+
+	CHECK(apu.channel_output(APU::CH1) == 5);
+
+	apu.write(0xFF12, 0x90);	// volume 9 without trigger
+	CHECK(apu.channel_output(APU::CH1) == 5);
+
+	apu.write(0xFF14, 0x87);	// trigger reloads the volume
+	CHECK(apu.channel_output(APU::CH1) == 9);
+}
+
+TEST_CASE("APU: writing NR11 changes the duty immediately")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x00);	// duty 0: step 0 is low
+	apu.write(0xFF12, 0xF0);	// volume 15
+	apu.write(0xFF13, 0xFF);
+	apu.write(0xFF14, 0x87);
+	CHECK(apu.channel_output(APU::CH1) == 0);
+
+	apu.write(0xFF11, 0x80);	// duty 2: step 0 is high
+	CHECK(apu.channel_output(APU::CH1) == 15);
+}
+
+TEST_CASE("APU: turning the CH1 DAC off disables the channel")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x80);
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF13, 0xFF);
+	apu.write(0xFF14, 0x87);
+	CHECK((apu.read(0xFF26) & 0x01) == 0x01);
+
+	apu.write(0xFF12, 0x00);
+	CHECK(apu.channel_output(APU::CH1) == 0);
+	CHECK((apu.read(0xFF26) & 0x01) == 0x00);
+}
+
+TEST_CASE("APU: power off disables CH1")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF11, 0x80);
+	apu.write(0xFF12, 0xF0);
+	apu.write(0xFF13, 0xFF);
+	apu.write(0xFF14, 0x87);
+	CHECK((apu.read(0xFF26) & 0x01) == 0x01);
+
+	apu.write(0xFF26, 0x00);
+	CHECK(apu.channel_output(APU::CH1) == 0);
+	CHECK(apu.read(0xFF26) == 0x70);
+}
+
+TEST_CASE("APU: the mixer produces PCM samples for CH1")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch1(apu, 2, 15, 0x7FF);
+
+	CHECK(apu.available_frames() == 0);
+	for(int i = 0; i < 1000; ++i)
+	{
+		apu.tick();
+	}
+	REQUIRE(apu.available_frames() > 0);
+
+	int16_t buffer[2048];
+	const size_t frames = apu.read_samples(buffer, 1024);
+	CHECK(frames > 0);
+
+	bool non_zero = false;
+	for(size_t i = 0; i < frames * 2; ++i)
+	{
+		if(buffer[i] != 0)
+		{
+			non_zero = true;
+		}
+	}
+	CHECK(non_zero);
+	CHECK(apu.available_frames() == 0);
+}
+
+TEST_CASE("APU: read_samples is bounded by the available frames")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch1(apu, 2, 15, 0x7FF);
+
+	for(int i = 0; i < 10000; ++i)
+	{
+		apu.tick();
+	}
+
+	const size_t available = apu.available_frames();
+	REQUIRE(available > 32);
+
+	int16_t buffer[64];	// 32 stereo frames
+	CHECK(apu.read_samples(buffer, 32) == 32);
+	CHECK(apu.available_frames() == available - 32);
+}
+
+TEST_CASE("APU: mixer is silent while no channel is active")
+{
+	APU apu;
+	power_on(apu);
+
+	for(int i = 0; i < 1000; ++i)
+	{
+		apu.tick();
+	}
+	REQUIRE(apu.available_frames() > 0);
+
+	int16_t buffer[2048];
+	const size_t frames = apu.read_samples(buffer, 1024);
+	for(size_t i = 0; i < frames * 2; ++i)
+	{
+		CHECK(buffer[i] == 0);
+	}
+}
+
+TEST_CASE("APU: resampling targets the configured sample rate")
+{
+	APU apu;
+	power_on(apu);
+
+	for(int i = 0; i < 48000; ++i)
+	{
+		apu.tick();
+	}
+
+	CHECK(apu.available_frames() == 549);	// 48000 * 48000 / 4194304
+}

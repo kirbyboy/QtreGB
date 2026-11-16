@@ -121,6 +121,8 @@ int main()
 				break;
 		}
 
+		frontend.get_emulator()->drain_audio();
+
 		// --- 2. Update framebuffer if there is one ---
 		if (frame_ready)
 		{

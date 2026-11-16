@@ -18,16 +18,68 @@ m_is_emulator_ready(false)
 	}
 
 	m_emulator = std::unique_ptr<QtreGB>(new QtreGB());
+	init_audio();
 }
 
 EmulatorInstance::~EmulatorInstance()
 {
+	if(m_audio_device != 0)
+	{
+		SDL_CloseAudioDevice(m_audio_device);
+		m_audio_device = 0;
+	}
+
 	// The backend may handle destroying the texture
 	if(m_backend && m_texture_id)
 	{
 		m_backend->destroyTexture(m_texture_id);
 		m_texture_id = nullptr;
 	}
+}
+
+bool EmulatorInstance::init_audio()
+{
+	SDL_AudioSpec want{};
+	want.freq = static_cast<int>(APU::SAMPLE_RATE);
+	want.format = AUDIO_S16SYS;
+	want.channels = 2;
+	want.samples = 1024;
+	want.callback = nullptr;	// SDL_QueueAudio
+
+	m_audio_device = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0);
+	if(m_audio_device == 0)
+	{
+		return false;
+	}
+
+	SDL_PauseAudioDevice(m_audio_device, 0);
+	return true;
+}
+
+void EmulatorInstance::drain_audio()
+{
+	if(m_audio_device == 0 || !m_is_emulator_ready)
+	{
+		return;
+	}
+
+	// Do not let the queue grow without bound if the emulator runs faster
+	// than the audio device consumes samples (about 100 ms of audio).
+	const Uint32 max_queued = (APU::SAMPLE_RATE / 10) * 2 * sizeof(int16_t);
+	if(SDL_GetQueuedAudioSize(m_audio_device) > max_queued)
+	{
+		return;
+	}
+
+	int16_t buffer[2048];	// 1024 stereo frames
+	const size_t frames = m_emulator->m_apu.read_samples(buffer, 1024);
+	if(frames == 0)
+	{
+		return;
+	}
+
+	SDL_QueueAudio(m_audio_device, buffer,
+		static_cast<Uint32>(frames * 2 * sizeof(int16_t)));
 }
 
 void EmulatorInstance::update_frame(const u32 *palette)
@@ -106,6 +158,11 @@ bool EmulatorInstance::load_boot_rom(std::vector<u8> boot_rom)
 
 void EmulatorInstance::reset()
 {
+	if(m_audio_device != 0)
+	{
+		SDL_ClearQueuedAudio(m_audio_device);
+	}
+
 	m_emulator = std::unique_ptr<QtreGB>(new QtreGB());
 	if(!m_boot_rom.empty())
 	{
