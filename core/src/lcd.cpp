@@ -25,26 +25,18 @@ void LCD::lcd_init(bool boot_rom)
 	m_pending_stat = 0;
 	m_pending_stat_value = 0;
 	m_delayed_write_count = 0;
-#ifdef QTR_CPU_MICRO
 	m_ppu_write_delay = 3;
-#endif
 	if(const char* e = std::getenv("QTR_PPUWRITEDELAY"))
 	{
 		m_ppu_write_delay = static_cast<u8>(std::atoi(e));
 	}
 	for(int i = 0; i < 12; ++i) m_reg_write_delay[i] = m_ppu_write_delay;
-#ifdef QTR_CPU_MICRO
 	m_reg_write_delay[7] = 4;	// BGP
 	m_reg_write_delay[8] = 4;	// OBP0
 	m_reg_write_delay[3] = 4;	// SCX
 	m_reg_write_delay[2] = 4;	// SCY
-#endif
 	if(const char* e = std::getenv("QTR_BGPWRITEDELAY")) m_reg_write_delay[7] = static_cast<u8>(std::atoi(e));
-#ifdef QTR_CPU_MICRO
 	m_bgp_write_delay_ly0 = 8;
-#else
-	m_bgp_write_delay_ly0 = m_reg_write_delay[7];
-#endif
 	if(const char* e = std::getenv("QTR_BGPWRITEDELAY_LY0")) m_bgp_write_delay_ly0 = static_cast<u8>(std::atoi(e));
 	if(const char* e = std::getenv("QTR_OBP0WRITEDELAY")) m_reg_write_delay[8] = static_cast<u8>(std::atoi(e));
 	if(const char* e = std::getenv("QTR_OBP1WRITEDELAY")) m_reg_write_delay[9] = static_cast<u8>(std::atoi(e));

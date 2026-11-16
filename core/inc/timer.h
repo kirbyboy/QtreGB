@@ -20,11 +20,6 @@ class Timer
 		u8 read_div();
 		void write_div();	// on HW any write resets the divider
 		u8 read_tima();
-
-		// Between begin_cpu_phase() and the next timer_tick(), reads and the
-		// reload/load window decisions of writes are judged against end-of-cycle
-		// state (dry-run of the coming tick); timer_tick() then lands the cycle.
-		void begin_cpu_phase();
 		void write_tima(u8 value);
 		u8 read_tma();
 		void write_tma(u8 value);
@@ -39,15 +34,9 @@ class Timer
 		u8 m_tima;
 		u8 m_tma;
 		u8 m_tac;
-		u8 m_reload_pending;	// cycle A: T-cycles until the TMA reload
-		u8 m_load_active;		// cycle B: TIMA stays latched to TMA
-		bool m_tima_write_block;
-		bool m_div_increment_absorbed;	// DIV write cycle consumes the divider increment of that T-cycle
-		bool m_cpu_phase;				// CPU runs before this cycle's timer_tick; reads see end-of-cycle state
 		InterruptCallback m_interrupt_handler;
 
-		// DocBoy-style timer (only under QTR_CPU_MICRO). The divider is
-		// advanced by 4 once per M-cycle at T3.
+		// The divider is advanced by 4 once per M-cycle at T3.
 		u8 m_timer_state = 0;			// 0=None, 1=Reload, 2=Pending
 		bool m_last_div_signal = false;
 		void set_div(u16 value);
@@ -56,11 +45,6 @@ class Timer
 		void handle_pending_tima_reload();
 
 		u16 selected_bit();	// bit 9 (mode 0) does not fit in u8
-		bool signal();
-		u16 div_end_of_cycle();
-		bool edge_pending();
-		u8 peek_tima();
-		void apply_timer_tick();
 };
 
 } // namespace qtreGB

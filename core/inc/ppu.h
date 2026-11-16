@@ -1,14 +1,13 @@
-#ifndef QTREGB_PPU_LEGACY_H
-#define QTREGB_PPU_LEGACY_H
+#ifndef QTREGB_PPU_H
+#define QTREGB_PPU_H
 
-#include <vector>
 #include <array>
 #include <deque>
 #include <functional>
+#include <vector>
 
 #include "types.h"
 #include "memory.h"
-#include "ibus.h"
 #include "oam_entry.h"
 #include "videobus.h"
 #include "lcd.h"
@@ -16,44 +15,44 @@
 namespace qtreGB
 {
 
-class LCD;
+class IBus;
 
-/*
- Bit7   BG and Window over OBJ (0=No, 1=BG and Window colors 1-3 over the OBJ)
- Bit6   Y flip          (0=Normal, 1=Vertically mirrored)
- Bit5   X flip          (0=Normal, 1=Horizontally mirrored)
- Bit4   Palette number  **Non CGB Mode Only** (0=OBP0, 1=OBP1)
- Bit3   Tile VRAM-Bank  **CGB Mode Only**     (0=Bank 0, 1=Bank 1)
- Bit2-0 Palette number  **CGB Mode Only**     (OBP0-7)
- */
-
-class PPULegacy
+// Native DMG PPU. Dot-driven pipeline with a per-dot state selector:
+//
+//   - one T-cycle per tick, dispatched through a per-dot state selector,
+//   - OAM scan reading and filtering one entry every two dots,
+//   - STAT mode / LYC / VBlank edge timing including the DMG glitches
+//     (first line after turn on, last VBlank line, LYC IRQ disable window),
+//   - BG/window fetcher and OBJ fetcher with FIFO merging,
+//   - bus ownership of VRAM/OAM for CPU contention.
+class PPU
 {
 	public:
 		using FrameCallback = std::function<void(bool)>;
-
-		void set_interrupt_callback(InterruptCallback cb);
-    	void set_frame_callback(FrameCallback cb);
 
 		static const int LINES_PER_FRAME;
 		static const int TICKS_PER_LINE;
 		static const int YRES;
 		static const int XRES;
 
-		PPULegacy(LCD *lcd);
+		PPU(LCD *lcd);
+
+		void set_interrupt_callback(InterruptCallback cb) { m_request_interrupt = std::move(cb); }
+		void set_frame_callback(FrameCallback cb) { m_frame_done = std::move(cb); }
+
 		void ppu_init(bool boot_rom = false);
 		void ppu_tick();
-		void ppu_sync_lcd_power();	// Evaluates the LCDC bit 7 change synchronously at the FF40 write, before the CPU's end-of-opcode interrupt check (mooneye stat_lyc_onoff)
-		void set_dma_active(bool) {}
+		void ppu_sync_lcd_power() {}
+		void set_dma_active(bool active) { m_dma_active = active; }
 
 		u8 ppu_oam_read(u16 address);
 		void ppu_oam_write(u16 address, u8 value);
-		void ppu_oam_write_dma(u16 address, u8 value);	// OAM DMA write: never blocked by the PPU bus locks (real DMA wins the bus)
+		void ppu_oam_write_dma(u16 address, u8 value);
 
 		u8 ppu_vram_read(u16 address);
 		void ppu_vram_write(u16 address, u8 value);
 
-		const std::vector<u8>& get_video_buffer() const;
+		const std::vector<u8>& get_video_buffer() const { return m_video_buffer; }
 
 		// Bus ownership exposed to the CPU view. The PPU keeps these flags;
 		// BusCpuView is the one that drops/returns 0xFF for CPU accesses.
@@ -62,284 +61,361 @@ class PPULegacy
 		bool is_vram_read_locked() const { return m_vram_bus.is_acquired(VideoAccess::Read); }
 		bool is_vram_write_locked() const { return m_vram_bus.is_acquired(VideoAccess::Write); }
 
-		void connect_bus(IBus* bus);
+		void connect_bus(IBus *bus) { m_bus = bus; }
 
-		u8 read_lcd_register(u16 offset) { return m_lcd->read(offset); }
-		void write_lcd_register(u16 offset, u8 value) { m_lcd->write(offset, value); }
+		u8 read_lcd_register(u16 offset);
+		void write_lcd_register(u16 offset, u8 value);
 
-		// Debug-only accessors for the temp trace tools.
+		// Debug-only accessors for the trace tools.
 		u16 debug_dots() const { return m_dots; }
 		u8 debug_lx() const { return m_lx; }
-		u8 debug_fetch_x() const { return m_bg_fetch_x; }
-		u8 debug_pushed_x() const { return m_pushed_x; }
-		int debug_fetch_phase() const { return static_cast<int>(m_fetch_phase); }
-		bool debug_fetch_window() const { return m_fetch_window; }
-		bool debug_fetching_sprite() const { return m_is_fetching_sprite; }
-		size_t debug_bg_fifo() const { return m_bg_pixels.size(); }
-		size_t debug_obj_fifo() const { return m_obj_pixels.size(); }
-		bool debug_oam_pending() const { return oam_entry_pending(m_lx); }
-		u8 debug_oam_served() const { return m_oam_served_count[m_lx]; }
-		u8 debug_oam_entries() const { return static_cast<u8>(m_oam_entries[m_lx].size()); }
-		int debug_obj_phase() const { return static_cast<int>(m_obj_fetch_phase); }
-		u8 debug_obj_wait() const { return m_obj_fetch_wait; }
-		u8 debug_post_wait() const { return m_obj_post_wait; }
+		u8 debug_fetch_x() const { return static_cast<u8>(m_bwf.lx); }
+		u8 debug_pushed_x() const { return m_lx >= 8 ? static_cast<u8>(m_lx - 8) : 0; }
+		int debug_fetch_phase() const { return 0; }
+		bool debug_fetch_window() const { return m_w_active; }
+		bool debug_fetching_sprite() const { return m_fetching_sprite; }
+		size_t debug_bg_fifo() const { return m_bg_fifo.size(); }
+		size_t debug_obj_fifo() const { return m_obj_fifo.size(); }
+		bool debug_oam_pending() const { return !m_oam_entries[m_lx].empty(); }
+		u8 debug_oam_served() const { return 0; }
+		u8 debug_oam_entries() const { return m_oam_entries[m_lx].count; }
+		int debug_obj_phase() const { return 0; }
+		u8 debug_obj_wait() const { return 0; }
+		u8 debug_post_wait() const { return 0; }
 
 	private:
-		IBus *m_bus;
-		LCD *m_lcd;
-		Memory m_vram;
-		std::vector<OAMEntry> m_oam_ram;	// OAM RAM
-		u8 m_oam_scan_index = 0;	// OAM entry currently being scanned (0..39)
-		u8 m_oam_scan_y = 0;	// Y byte read on the even dot of the current OAM entry
-		u8 m_oam_scan_obj_height = 8;	// Sprite height captured at dot 0 of the scan
+		enum Mode : u8
+		{
+			HBLANK = 0,
+			VBLANK = 1,
+			OAM_SCAN = 2,
+			PIXEL_TRANSFER = 3,
+		};
 
-		// F5: per-LX sprite entries and pixel pipeline
+		struct Lcdc
+		{
+			bool enable = false;
+			bool win_tile_map = false;
+			bool win_enable = false;
+			bool bg_win_tile_data = false;
+			bool bg_tile_map = false;
+			bool obj_size = false;
+			bool obj_enable = false;
+			bool bg_win_enable = false;
+		};
+
+		struct Stat
+		{
+			bool lyc_eq_ly_int = false;
+			bool oam_int = false;
+			bool vblank_int = false;
+			bool hblank_int = false;
+			bool lyc_eq_ly = false;
+			u8 mode = 0;
+		};
+
+		struct PendingWrite
+		{
+			u8 countdown = 0;
+			u8 value = 0;
+		};
+
 		struct BgPixel
 		{
 			u8 color_index = 0;
-			bool window = false;
 		};
 
 		struct ObjPixel
 		{
 			u8 color_index = 0;
-			u8 palette = 0;
-			u8 priority = 0;
+			u8 attributes = 0;
 			u8 number = 0;
 			u8 x = 0;
 		};
 
-		struct OamLineEntry
+		struct OamScanEntry
 		{
-			OAMEntry entry;
 			u8 number = 0;
+			u8 y = 0;
+			u8 x = 0;
 		};
 
-		enum class PixelTransferPhase
+		struct SpriteList
 		{
-			Dummy,
-			Discard,
-			Lx0,
-			Lx8,
+			std::array<OamScanEntry, 10> entries {};
+			u8 count = 0;
+
+			bool empty() const { return count == 0; }
+			void clear() { count = 0; }
+
+			void push(const OamScanEntry& entry)
+			{
+				if(count < entries.size())
+				{
+					entries[count++] = entry;
+				}
+			}
+
+			const OamScanEntry& back() const { return entries[count - 1]; }
+			void pop_back() { --count; }
 		};
 
-		enum class FetchPhase
-		{
-			BgTilemap,
-			BgLow,
-			BgHigh,
-			BgPush,
-			ObjLow,
-			ObjHigh,
-			ObjPush,
-		};
+		using TickSelector = void (PPU::*)();
+		using FetcherTickSelector = void (PPU::*)();
 
-		std::array<std::vector<OamLineEntry>, 168> m_oam_entries;
-		std::array<u8, 168> m_oam_served_count{};	// OBJ entries already served at each LX
-		struct PendingPalettePixel
-		{
-			u16 dot;
-			u8 x;
-			u8 y;
-			u8 color_index;
-			u8 palette_sel;	// 0 = BGP, 1 = OBP0, 2 = OBP1
-			bool window;
-			u8 out_delay;	// Cumulative x_extra output delay before this pixel
-			u8 obj_delay;	// Per-sprite OBJ palette delay
-		};
-
-		std::deque<BgPixel> m_bg_pixels;
-		std::deque<PendingPalettePixel> m_pending_palette_pixels;
-		u8 m_bg_palette_delay = 0;
-		u8 m_bg_palette_delay_ly0 = 0;
-		u8 m_line_obj_out_delay = 0;
-		u8 m_win_palette_delay = 0;
-		bool m_wx0_write_pending = false;	// WX changed to 0 this line
-		bool m_wx0_line0_window = false;	// WX=0 window activated at lx=11
-		u8 m_obj_palette_delay = 0;
-		void flush_pending_palette(bool all);
-		std::deque<ObjPixel> m_obj_pixels;
-
-		u8 m_lx = 0;	// X + 8, 0..167
-		u8 m_initial_scx_to_discard = 0;
-		u8 m_initial_scx_discarded = 0;
-		u8 m_bg_fetch_x = 0;	// pixel X inside the current BG fetch, advances 8 per tile
-		u8 m_bg_fetch_skip = 0;	// Pixels discarded from the next BG tile after a mid-line SCX low-bit change
-		u8 m_bg_prev_scx_low = 0;	// SCX low bits used by the previous BG fetch
-		u8 m_bg_line_scx_low = 0;	// SCX low bits latched for the current line (sampled at the first real B fetch)
-		u8 m_window_tile_x = 0;
-		u8 m_oam_scan_count = 0;
-		bool m_window_active = false;
-		bool m_window_activating = false;	// Window trigger seen; activation happens on the next dot
-		bool m_window_fetch_enable = false;	// WIN_EN sampled at the tile fetch boundary
-		u8 m_window_trigger_row = 0;	// Window row assigned at trigger time
-		u8 m_window_activation_delay = 0;	// Extra dots before activation (WX=0 with SCX>0)
-		bool m_window_active_for_frame = false;
-		bool m_window_just_activated = false;
-		bool m_is_fetching_sprite = false;
-		OamLineEntry m_sprite_entry;
-		u8 m_sprite_low = 0;
-		u8 m_sprite_high = 0;
-		u8 m_obj_fetch_wait = 0;	// Second dot of an OBJ access (2 dots per access)
-		u8 m_obj_post_wait = 0;	// Dot after the OBJ push where the FIFO still waits
-		u8 m_obj_penalty = 6;	// Total dots consumed by the current OBJ fetch
-		u16 m_mode0_penalty_dots = 0;	// CPU-visible mode 3 extension from OBJ penalties
-		u8 m_mode0_extra_correction = 0;	// Extra pullback for a lone X>0 OBJ
-		u8 m_obj_group_total = 0;	// Number of sprites in the current same-X OBJ group
-		u8 m_last_group_lx = 0xFF;	// LX of the current OBJ group
-		bool m_obj_multiple_groups = false;	// The line has sprites in more than one X group
-		std::vector<int> m_obj_considered_tiles;	// BG/window tiles already considered by an OBJ on this line
-		u16 m_sprite_data_addr = 0;
-		u8 m_sprite_pixels[8] = {};
-
-		PixelTransferPhase m_pixel_transfer_phase = PixelTransferPhase::Dummy;
-		FetchPhase m_fetch_phase = FetchPhase::BgTilemap;
-		FetchPhase m_obj_fetch_phase = FetchPhase::ObjLow;
-		u16 m_fetch_tilemap_addr = 0;
-		u16 m_fetch_data_addr = 0;
-		u8 m_fetch_tile_number = 0;
-		u8 m_fetch_low = 0;
-		u8 m_fetch_high = 0;
-		u8 m_bg_fetch_wait = 0;	// Second dot of a window access (6-dot window startup)
-		u8 m_scx_latch_dot = 89;	// Dot where SCX low bits are latched
-		u16 m_hblank_irq_lx = 163;
-		u16 m_vblank_quirk_dot = 454;
-		u16 m_vblank_irq_dot = 453;
-		u16 m_mode0_lx = 167;
-		u16 m_mode0_budget = 252;
-		u8 m_win_startup_wait = 3;
-		u8 m_win_startup_wait_ly0 = 3;
-		u8 m_win_midline_wait = 2;
-		u8 m_win_startup_lx = 11;
-		u8 m_win_trigger_bias = 0;
-		u8 m_wx0_trigger_lx = 11;
-		u8 m_wx0_activation_delay = 1;
-		u8 m_wx0_scx0_delay = 8;
-		u8 m_wx0_scx1_delay = 0;
-		u8 m_wx0_ly0_delay = 1;
-		u8 m_wx_delay2 = 0;
-		u8 m_wx_delay3 = 0;
-		u8 m_wx_glitch_delay = 0;
-		bool m_fetch_window = false;
-
-		bool oam_entry_pending(u8 lx) const { return m_oam_served_count[lx] < m_oam_entries[lx].size(); }
-		void pixel_transfer_tick();
-		void tick_fetcher();
-		void handle_bg_push();
-		void tick_bg_fetch();
-		void tick_obj_fetch();
-		void push_bg_tile();
-		void push_obj_pixels();
-		void start_sprite_fetch();
-		void finish_pixel_transfer();
-		std::vector<u8> m_video_buffer;	// A buffer that has all the pixels of a frame
-		u16 m_line_ticks; // Indicates in which dot of the PPU we are while we are scanning horizontal lines
-		u16 m_dots = 0;	// 0-based dot within the line (m_line_ticks - 1); target timeline unit
-		u8 m_window_line;	// Window tile row used by the current activation
-		u8 m_window_next_row = 0;	// Row for the next window activation
-		//PPU State Machine
-		void ppu_mode_oam();
-		void ppu_mode_vblank();
-		void ppu_mode_hblank();
-		void ppu_lcd_on_line();	// Special line schedule used only for the first 3 lines after the LCD is turned on
-
-		using TickSelector = void (PPULegacy::*)();
-		TickSelector m_tick_selector = &PPULegacy::ppu_mode_oam;	// Current per-dot state (F4)
-
-		void ppu_power_off();	// LCD turned off: force LY=0 and mode 0, reset pipeline state, no interrupts
-		void ppu_power_on();	// LCD turned on: line 0 starts in mode 0 without OAM scan, restart the LYC==LY comparison
-		void ppu_reset_line_state();	// Resets the per-line/pipeline state shared by the LCD power on/off transitions
-
-		void increment_ly();	// Increases lcd counter ly and launches interrupts if needed
-		void schedule_lyc_update();	// Schedules the delayed LYC==LY flag update after an LY change
-		void check_lyc();	// Compares LY with LYC, updates the flag and launches the interrupt if needed, must be called every time LY changes
-		void set_lyc_flag(bool ly_equals_lyc);	// Writes the LYC==LY flag and fires the STAT interrupt on its 0->1 edge
-		bool m_lcd_enabled;	// Last known LCDC.7 state, used to detect LCD power on/off transitions on each tick
-		bool m_stat_irq_line = false;	// Internal STAT IRQ line (latched), cleared on entering mode 3
-		bool m_pending_stat_irq = false;	// STAT IRQ edge seen last dot; raised on the next dot (1-T delay)
-		bool m_last_stat_irq = false;	// Previous dot's STAT IRQ condition (edge detection)
-		bool m_stat_model = true;	// Unified STAT line model (QTR_STATMODEL=0 disables)
-		bool m_oam_line = false;	// OAM condition latch held until mode 3 entry
-		bool m_vblank_oam_pulse = false;	// One-tick OAM pulse for the DMG VBlank quirk
-		bool m_hblank_line = false;	// HBlank STAT condition latched at lx=165
-		u8 m_stat_delay_lyc = 0;
-		u8 m_stat_delay_oam = 1;
-		u8 m_stat_delay_vblank = 1;
-		u8 m_stat_delay_hblank = 0;
-		u8 m_stat_deliver_countdown = 0;
-		bool m_stat_deliver_pending = false;
-		bool m_stat_prev_lyc = false;
-		bool m_stat_prev_oam = false;
-		bool m_stat_prev_vblank = false;
-		bool m_stat_prev_hblank = false;
-		bool m_enable_lyc_eq_ly_irq = true;	// LYC IRQ disabled at dot 453 and last VBlank line 2..6
-		bool m_vblank_last_line = false;	// True while the PPU is on VBlank line 153 (LY is 0 from dot 2 on)
-		void update_stat_irq();	// Update STAT IRQ with edge detection (LCD-on special schedule)
-		void update_stat_irq_for_oam_mode();	// OAM IRQ is checked only on mode transitions
-		void raise_stat_irq();	// Per-dot STAT IRQ edge evaluation
-		u8 m_lyc_seen;	// Last LYC value seen by the PPU, used to detect CPU writes to LYC
-		u8 m_lyc_update_countdown = 0;	// Dots left until the delayed LYC==LY flag update is applied (0 = no update pending)
-		bool m_lyc_update_value = false;	// Value written when the delayed LYC==LY flag update fires
-
-		// DMG: the PPU sees LCDC/BGP/WX/LY/LYC delayed by 1 T-cycle.
-		u8 m_last_lcdc = 0;
-		u8 m_lcdc_hist[10] {};
-		u8 m_lcdc_hist_delay = 0;
-		u8 m_lcdc_delay_bit[7] {};
-		u8 m_tile_sel_low_delay = 0;
-		u8 m_tile_sel_high_delay = 0;
-		u8 m_tile_sel_ly0_delay = 0xFF;
-		u8 m_tile_sel_tail_delay = 0xFF;
-		u8 m_tile_sel_tail_high_delta = 0;
-		u8 m_last_bgp = 0;
-		u8 m_bgp_pre_tick = 0;
-		u8 m_last_wx = 0;
-		u8 m_last_ly = 0;
-		u8 m_last_lyc = 0;
-		void update_delayed_registers();
-#ifdef QTR_CPU_MICRO
-		u8 lcdc_hist_at(u8 delay) const { return m_lcdc_hist[delay < 9 ? delay : 9]; }
-		u8 lcdc_ppu() const { return lcdc_hist_at(m_lcdc_hist_delay); }
-		u8 lcdc_ppu_prev() const { return lcdc_hist_at(static_cast<u8>(m_lcdc_hist_delay + 1)); }
-		bool lcdc_bg_en() const { return (lcdc_hist_at(m_lcdc_delay_bit[0]) & 0x01) != 0; }
-		bool lcdc_obj_en() const { return (lcdc_hist_at(m_lcdc_delay_bit[1]) & 0x02) != 0; }
-		u8 lcdc_obj_height() const { return (lcdc_hist_at(m_lcdc_delay_bit[2]) & 0x04) != 0 ? 16 : 8; }
-		u16 lcdc_bg_map() const { return (lcdc_hist_at(m_lcdc_delay_bit[3]) & 0x08) != 0 ? 0x9C00 : 0x9800; }
-		u16 lcdc_tile_data_at(u8 delay) const { return (lcdc_hist_at(delay) & 0x10) != 0 ? 0x8000 : 0x8800; }
-		u16 lcdc_tile_data() const { return lcdc_tile_data_at(m_lcdc_delay_bit[4]); }
-		bool lcdc_win_en() const { return (lcdc_hist_at(m_lcdc_delay_bit[5]) & 0x20) != 0; }
-		bool lcdc_win_en_prev() const { return (lcdc_hist_at(static_cast<u8>(m_lcdc_delay_bit[5] + 1)) & 0x20) != 0; }
-		u16 lcdc_win_map() const { return (lcdc_hist_at(m_lcdc_delay_bit[6]) & 0x40) != 0 ? 0x9C00 : 0x9800; }
-#else
-		bool lcdc_bg_en() const { return (m_last_lcdc & 0x01) != 0; }
-		bool lcdc_obj_en() const { return m_lcd->get_lcdc_obj_enable(); }
-		u8 lcdc_obj_height() const { return m_lcd->get_lcdc_obj_height(); }
-		u16 lcdc_bg_map() const { return m_lcd->get_lcdc_bg_map_area(); }
-		u16 lcdc_tile_data_at(u8) const { return m_lcd->get_lcdc_bgw_data_area(); }
-		u16 lcdc_tile_data() const { return m_lcd->get_lcdc_bgw_data_area(); }
-		bool lcdc_win_en() const { return m_lcd->get_lcdc_win_enable(); }
-		bool lcdc_win_en_prev() const { return (m_last_lcdc & 0x20) != 0; }
-		u16 lcdc_win_map() const { return m_lcd->get_lcdc_win_map_area(); }
-#endif
-
-
-		u8 m_pushed_x;	// Indicates how many pixels have been pushed to screen
+		IBus *m_bus = nullptr;
+		LCD *m_lcd = nullptr;
+		Memory m_vram;
+		std::vector<OAMEntry> m_oam_ram;
+		std::vector<u8> m_video_buffer;
+		VideoBus m_oam_bus;
+		VideoBus m_vram_bus;
 
 		InterruptCallback m_request_interrupt;
 		FrameCallback m_frame_done;
 
-		void request_interrupt(InterruptType IType);
-		// While a lock is active the CPU reads $FF and writes are dropped (mooneye lcdon_timing-GS).
-		VideoBus m_oam_bus;
-		VideoBus m_vram_bus;
-		u8 m_lcd_on_line = 255;	// 0/1/2 = special lines after LCD power on, 255 = normal schedule
+		bool m_boot_rom = false;
+		bool m_dma_active = false;
 
+		// PPU registers (the PPU owns them; the LCD is a passive mirror for
+		// debug/GUI, as in the full pipeline).
+		Lcdc m_lcdc {};
+		Stat m_stat {};
+		u8 m_scy = 0;
+		u8 m_scx = 0;
+		u8 m_ly = 0;
+		u8 m_lyc = 0;
+		u8 m_dma = 0;
+		u8 m_bgp = 0;
+		u8 m_obp0 = 0;
+		u8 m_obp1 = 0;
+		u8 m_wy = 0;
+		u8 m_wx = 0;
+
+		// Dot-driven state machine.
+		TickSelector m_tick_selector = &PPU::oam_scan_after_turn_on;
+		FetcherTickSelector m_fetcher_tick_selector = &PPU::bgwin_prefetcher_get_tile_0;
+		Mode m_mode = OAM_SCAN;
+		u16 m_dots = 0;	// [0, 456)
+		u8 m_lx = 0;	// LX = X + 8, therefore [0, 168]
+
+		// DMG: the PPU sees LCDC/BGP/WX/LY/LYC delayed by 1 T-cycle.
+		bool m_last_stat_irq = false;
+		bool m_enable_lyc_eq_ly_irq = true;
+		bool m_pending_stat_irq = false;
+		u8 m_last_bgp = 0;
+		u8 m_last_wx = 0;
+		u8 m_last_ly = 0;
+		u8 m_last_lyc = 0;
+		Lcdc m_last_lcdc {};
+
+		PendingWrite m_pending_stat {};
+
+		// First line after the LCD is turned on: STAT stays in HBlank during
+		// OAM scan and the HBlank mode update is delayed by two dots.
+		bool m_is_glitched_line_0 = false;
+		u8 m_glitched_line_0_hblank_delay = 0;
+
+		// Last VBlank line: STAT reads HBlank during the OAM scan transition.
+		bool m_vblank_last_line_stat_mode_hblank_glitch = false;
+
+		// OAM scan.
+		struct
+		{
+			u8 count = 0;
+			u8 index = 0;
+			u8 request = 0;
+		} m_oam_scan;
+		OAMEntry m_oam_scan_registers {};	// word read for the entry being scanned
+		std::array<SpriteList, 168> m_oam_entries {};
+
+		// Window.
+		bool m_w_active_for_frame = false;
+		u8 m_w_wly = 0xFF;
+		bool m_w_activating = false;
+		bool m_w_active = false;
+		bool m_w_just_activated = false;
+		u8 m_wf_tilemap_x = 0;
+
+		// Pixel transfer.
+		struct
+		{
+			u8 to_discard = 0;
+			u8 discarded = 0;
+		} m_initial_scx;
+
+		// BG/window fetcher state (the pixel-slice fetcher is shared).
+		struct
+		{
+			u16 lx = 0;	// [0, 256), advances 8 by 8
+			u16 tilemap_tile_vram_addr = 0;
+			u8 tile_number = 0;
+			bool interrupted_fetch_has_data = false;
+			u8 interrupted_tile_data_low = 0;
+			u8 interrupted_tile_data_high = 0;
+		} m_bwf;
+		// OBJ prefetcher state: the OAM entry being served and the tile number
+		// and attributes read from it.
+		struct
+		{
+			OamScanEntry entry {};
+			u8 tile_number = 0;
+			u8 attributes = 0;
+		} m_of;
+		struct
+		{
+			u16 tile_data_vram_address = 0;
+			u8 tile_data_low = 0;
+			u8 tile_data_high = 0;
+		} m_psf;
+
+		// BG/window and OBJ FIFOs.
+		std::deque<BgPixel> m_bg_fifo {};
+		std::deque<ObjPixel> m_obj_fifo {};
+		bool m_pixel_slice_fetcher_push_enabled = false;
+		bool m_pending_bg_fifo_fill = false;
+		bool m_fetching_sprite = false;
+
+		// Helpers.
+		void turn_on();
+		void turn_off();
+		bool is_lyc_eq_ly() const;
+		void raise_stat_irq();
+		void tick_pending_write();
+		void tick_stat();
+		void update_stat_irq(bool irq);
+		void update_stat_irq_for_oam_mode();
+		void update_stat_irq_for_oam_mode_do_not_clear_last_stat_irq();
+		void begin_increase_ly();
+		void end_increase_ly();
+		void write_stat_real(u8 value);
+		void write_lcdc_real(u8 value);
+		u8 read_lcdc() const;
+		void write_lcdc(u8 value);
+		u8 read_stat() const;
+		void write_stat(u8 value);
+		void tick_window();
+
+		// States.
+		void oam_scan_even();
+		void oam_scan_odd();
+		void oam_scan_77();
+		void oam_scan_done();
+		void oam_scan_after_turn_on();
+		void oam_scan_after_turn_on_78();
+		void oam_scan_after_turn_on_79();
+
+		void pixel_transfer_dummy_lx0();
+		void pixel_transfer_discard_lx0();
+		void pixel_transfer_discard_lx0_wx0_scx();
+		void pixel_transfer_lx0();
+		void pixel_transfer_lx8();
+
+		void hblank();
+		void hblank_452();
+		void hblank_453();
+		void hblank_454();
+		void hblank_455();
+		void hblank_last_line();
+		void hblank_last_line_453();
+		void hblank_last_line_454();
+		void hblank_last_line_455();
+		void hblank_first_line_after_turn_on();
+
+		void vblank();
+		void vblank_453();
+		void vblank_454();
+		void vblank_455();
+		void vblank_last_line();
+		void vblank_last_line_2();
+		void vblank_last_line_3();
+		void vblank_last_line_4();
+		void vblank_last_line_7();
+		void vblank_last_line_453();
+		void vblank_last_line_454();
+		void vblank_last_line_455();
+
+		// State helpers.
+		void enter_oam_scan();
+		void enter_pixel_transfer();
+		void enter_hblank();
+		void enter_vblank();
+		void enter_new_frame();
+		void update_mode(u8 mode);
+		u8 resolve_color(u8 color_index, u8 palette) const;
+		void increase_lx();
+
+		// Fetcher. The BG/window prefetcher and pixel-slice fetcher follow the
+		// validated state sequence: GetTile, GetTileDataLow, GetTileDataHigh,
+		// push. The OBJ fetcher interrupts the BG/window one when a sprite hit
+		// is pending at the current LX.
+		void tick_fetcher();
+		void reset_fetcher();
+		void pixel_slice_fetcher_idle();
+
+		void bgwin_prefetcher_get_tile_0();
+		void bg_prefetcher_get_tile_0();
+		void bg_prefetcher_get_tile_1();
+		void bg_pixel_slice_fetcher_get_tile_data_low_0();
+		void bg_pixel_slice_fetcher_get_tile_data_low_1();
+		void bg_pixel_slice_fetcher_get_tile_data_high_0();
+		void bg_pixel_slice_fetcher_get_tile_data_high_1();
+
+		void win_prefetcher_get_tile_0();
+		void win_prefetcher_get_tile_1();
+		void win_pixel_slice_fetcher_get_tile_data_low_0();
+		void win_pixel_slice_fetcher_get_tile_data_low_1();
+		void win_pixel_slice_fetcher_get_tile_data_high_0();
+		void win_pixel_slice_fetcher_get_tile_data_high_1();
+
+		void bgwin_pixel_slice_fetcher_get_tile_data_high_1();
+
+		// OBJ fetcher: tile number/attributes from OAM, tile data from VRAM and
+		// merge into the OBJ FIFO honoring sprite priority.
+		void obj_prefetcher_get_tile_0();
+		void obj_prefetcher_get_tile_1();
+		void obj_pixel_slice_fetcher_get_tile_data_low_0();
+		void obj_pixel_slice_fetcher_get_tile_data_low_1();
+		void obj_pixel_slice_fetcher_get_tile_data_high_0();
+		void obj_pixel_slice_fetcher_get_tile_data_high_1_and_merge_with_obj_fifo();
+
+		void setup_bg_pixel_slice_fetcher_tilemap_tile_address();
+		void setup_bg_pixel_slice_fetcher_tile_data_address();
+		void setup_win_pixel_slice_fetcher_tilemap_tile_address();
+		void setup_win_pixel_slice_fetcher_tile_data_address();
+		void setup_obj_pixel_slice_fetcher_tile_data_address();
+		void read_bgwin_tile_number();
+		void read_bgwin_tile_data_low();
+		void read_bgwin_tile_data_high();
+		void read_obj_tile_data_low();
+		void read_obj_tile_data_high();
+		void enable_pixel_slice_fetcher_push();
+		void disable_pixel_slice_fetcher_push();
+		void cache_bg_win_fetch();
+		void restore_bg_win_fetch();
+		void fill_bg_fifo();
+
+		bool is_bg_fifo_ready_to_be_popped() const;
+		bool is_obj_ready_to_be_fetched() const;
+		static bool is_obj_opaque(u8 color_index) { return color_index != 0; }
+		void handle_pixel_slice_fetcher_push();
+		void handle_pending_bg_fifo_fill();
+		void handle_pending_window_activation();
+		void activate_window();
+		void check_window_activation();
+		void setup_fetcher_for_window();
+
+		// OAM scan helpers.
+		void reset_oam_scan_entries();
+		void oam_scan_read_request();
+		void oam_scan_flush_read_request();
+		void handle_oam_scan_entry();
+
+		void push_pixel(u8 color);
+		void sync_lcd_from_ppu();
+		void reset();
 };
 
 } // namespace qtreGB
 
-namespace qtreGB
-{
-using PPU = PPULegacy;
-} // namespace qtreGB
 #endif

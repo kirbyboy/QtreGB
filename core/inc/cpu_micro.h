@@ -11,12 +11,10 @@ namespace qtreGB
 
 class ErrorReporter;
 
-// Parallel micro-op CPU skeleton (DocBoy-style).
+// Micro-op CPU.
 //
-// This class is intentionally not wired into QtreGB yet. It is developed and
-// tested in isolation so the current Z80GB remains the default until the port
-// passes the full suite (doctest, blargg, mts, PPU acceptance and the m3
-// harness).
+// Default and only CPU of QtreGB: it executes one micro-op per M-cycle and
+// times bus accesses per T-cycle.
 //
 // Model:
 //   - one M-cycle = four T-cycles: t0, t1, t2, t3
@@ -79,7 +77,7 @@ class CpuMicro : public ICPURegisters
 		void write_ie(u8 value) { m_ie = static_cast<u8>(value & 0x1F); }
 		void request_interrupt(InterruptType type) { m_if |= static_cast<u8>(type); }
 
-		// --- Compatibility with the Z80GB / QtreGB integration ---
+		// --- QtreGB / IBus integration ---
 		u8 read_IF() const override { return static_cast<u8>(m_if | 0xE0); }
 		void write_IF(u8 value) override { m_if = static_cast<u8>(value & 0x1F); }
 		u8 read_IE() const override { return m_ie; }

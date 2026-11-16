@@ -21,11 +21,7 @@ using namespace std;
 
 QtreGB::QtreGB() :
 	m_interrupt_controller(InterruptController()),
-#ifdef QTR_CPU_MICRO
 	m_cpu(),
-#else
-	m_cpu(Z80GB(&m_interrupt_controller)),
-#endif
 	m_cart(Cart()),
 	m_wram(Memory(0x2000)),
 	m_hram(Memory(0x80)),
@@ -42,14 +38,12 @@ QtreGB::QtreGB() :
 	m_cpu.connect_bus(&m_bus_cpu);
 	m_cpu.connect_error_reporter(&m_errors);
 
-#ifdef QTR_CPU_MICRO
 	// CpuMicro does not own the interrupt controller: point its IF/IE
-	// callbacks at the active CPU. Z80GB sets these in its constructor.
+	// callbacks at the active CPU.
 	m_interrupt_controller.set_IE_read_callback([this]() { return m_cpu.read_IE(); });
 	m_interrupt_controller.set_IE_write_callback([this](u8 value) { m_cpu.write_IE(value); });
 	m_interrupt_controller.set_IF_read_callback([this]() { return m_cpu.read_IF(); });
 	m_interrupt_controller.set_IF_write_callback([this](u8 value) { m_cpu.write_IF(value); });
-#endif
 
 	m_cart.connect_error_reporter(&m_errors);
 	m_dma.connect(&m_bus, &m_ppu);
@@ -165,19 +159,12 @@ void QtreGB::tick_once()
 			}
 		#endif
 	}
-#ifdef QTR_CPU_MICRO
-	// DocBoy timer: one tick per M-cycle, after the CPU T3.
+	// Timer: one tick per M-cycle, after the CPU T3.
 	m_cpu.tick();
 	if(m_clock.get() == Phase::T3)
 	{
 		m_timer.timer_tick();
 	}
-#else
-	m_timer.begin_cpu_phase();
-	m_cpu.tick();
-
-	m_timer.timer_tick();
-#endif
 	m_ppu.ppu_tick();
 
 	if(m_cpu.is_end_m_cycle())

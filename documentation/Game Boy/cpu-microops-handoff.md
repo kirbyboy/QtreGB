@@ -1,10 +1,11 @@
 # QtreGB — Handoff: CPU micro-ops (DocBoy-style)
 
-**Fecha:** 2026-11-15
-**Worktree:** `/home/pedro/projects/QtreGB/.wip/ppu` (rama `wip/ppu`)
+**Fecha:** 2026-11-15 (actualizado 2026-11-16)
+**Worktree:** `/home/pedro/projects/QtreGB/.wip/ppu-v4` (rama `ppu-v4`)
 **Backup de esta sesión:** `tmp/20261115_013151/`
-**Estado del árbol:** base por defecto (`Z80GB`) compilada y verde. El CPU
-nuevo (`CpuMicro`) está integrado detrás de `QTR_CPU_MICRO=1`.
+**Estado del árbol:** implementación final. `CpuMicro` es el único CPU y el
+PPU nativo es el único PPU; no hay flags de selección (ver §20). Las secciones
+1–19 conservan el histórico del desarrollo.
 
 ---
 
@@ -531,3 +532,149 @@ Tests del timer: la suite per-T queda bajo `#ifndef QTR_CPU_MICRO` y se
 añaden tests del timer DocBoy bajo el flag.
 
 Backup: `tmp/20261115_234441/`.
+
+---
+
+## 18. v4 — baseline micro + PPU DocBoy y plan de PPU nativo (2026-11-16)
+
+### Baseline correcto
+
+El baseline de v4 **no es el PPU legacy**. Es el pipeline que ya funciona:
+
+- `QTR_CPU_MICRO=1` → `CpuMicro` + timer DocBoy + `QTR_PPU_FULL=1`
+- PPU DocBoy (wrapper `PPUFull` sobre `docboy_ppu.cpp`)
+
+Verificado en `/home/pedro/projects/QtreGB/.wip/ppu-v4`:
+
+- harness **25 PASS / 0 FAIL / 8 SKIP** con BIOS
+- PPU acceptance **12/12**
+- mts **34/34**
+- blargg **15/15**
+- doctest **89/89** (416 assertions)
+
+No se debe volver al baseline legacy para trabajar en el PPU. El PPU
+legacy sigue disponible, pero no es el punto de partida.
+
+### Timer: nativo, no copia
+
+La rama `QTR_CPU_MICRO` de `core/src/timer.cpp` es una implementación
+nativa de QtreGB, no una copia de DocBoy. Usa:
+
+- `set_div()`, `inc_tima()`, `on_falling_edge_inc_tima()`
+- `handle_pending_tima_reload()`
+- `m_timer_state`, `m_last_div_signal`
+
+DocBoy se usó para estudiar la semántica (tick en T3, reload en dos
+pasos, edges de DIV/TAC), pero el código es propio. **No hay un port de
+timer pendiente**; ya es nativo y está validado por mts/blargg y por los
+tests de timer bajo `QTR_CPU_MICRO`.
+
+### PPU nativo: estrategia
+
+El `PPUv4` nativo anterior (máquina de estados + BG/ventana simplificados)
+no pasó el harness completo y se archivó en:
+
+- `tmp/native_ppu_wip_20261116_020615/`
+
+No es el baseline. A partir de ahora:
+
+1. Mantener micro + PPU DocBoy verde como base.
+2. Sustituir el PPU DocBoy por código nativo **pieza a pieza**, validando
+   contra 25/0/8 en cada paso.
+3. Orden previsto:
+   - fetcher BG/ventana exacto (prefetcher + pixel-slice + FIFO),
+   - ventana/glitches (`wx_0`, `multiple_wx`, `wx_6`),
+   - OBJ prefetcher/FIFO y mezcla,
+   - registros/STAT y edges.
+4. No eliminar la copia de DocBoy hasta que la versión nativa alcance
+   paridad.
+
+Trazas de referencia ya medidas (BIOS, `m3_bgp_change`):
+
+- modo 3 en dot 79, modo 0 en 251, modo 2 en 455;
+- pulso OAM STAT en dot 452;
+- primer tile BG MAP/LOW/HIGH en 83/85/87;
+- segundo MAP en 91.
+
+### Build
+
+```sh
+make clean
+make -C core QTR_CPU_MICRO=1 -j$(nproc)
+make -C mts QTR_CPU_MICRO=1 -j4
+make -C blargg QTR_CPU_MICRO=1 -j4
+make -C tests QTR_CPU_MICRO=1 -j4
+```
+
+`make clean` es obligatorio al cambiar flags: los objetos no codifican
+los flags y un build mezclado produce resultados falsos o segfaults.
+
+### Backups
+
+- Baseline/oráculo: tag `ppu-oracle-25-0-8` (worktree `.wip/ppu`).
+- Backup de esta sesión: `tmp/20261116_021319/`.
+- WIP nativo archivado: `tmp/native_ppu_wip_20261116_020615/`.
+
+---
+
+## 19. v4 — PPU nativo `PPUv4` en paridad (2026-11-16, continuación)
+
+El PPU nativo detrás de `QTR_PPU_V4=1` sustituye ya al PPU DocBoy con
+paridad total en DMG:
+
+| Suite | Resultado |
+|---|---|
+| harness mealybug + dmg-acid2 (BIOS) | 25 PASS / 0 FAIL / 8 SKIP |
+| PPU acceptance | 12/12 |
+| mts | 34/34 |
+| blargg | 15/15 |
+| doctest | 89/89 (416 assertions) |
+
+### Cómo se llegó
+
+- Hito 1: scaffold por dot + OAM/STAT/LYC (acceptance 11/12, harness 1/24/8).
+- Hito 2: fetcher BG/ventana completo (harness 10/15/8).
+- Hito 3: fetcher OBJ completo → harness 25/0/8 y acceptance 12/12.
+
+La clave del hito 3 fue que los pops del BG FIFO se bloquean mientras haya
+entradas OAM pendientes en el LX actual y `LCDC.OBJ_ENABLE=1`
+(`is_bg_fifo_ready_to_be_popped()`), lo que sincroniza el pipeline BG con
+el oráculo; además el fetcher OBJ (OAM, bitplanes, flip, 8x16, merge con
+prioridad, interrupción/caché del fetch BG) y la selección OBJ vs BG con
+`OBP0/OBP1`, opacidad y `BG_OVER_OBJ`.
+
+### Selección de PPU
+
+- `QTR_PPU_V4=1` → `PPUv4` y **no** `QTR_PPU_FULL`.
+- `QTR_CPU_MICRO=1` → `QTR_PPU_FULL ?= 1` solo si no se pide V4.
+- El oráculo DocBoy (`PPUFull` + `docboy_ppu.cpp`) se conserva intacto.
+
+### Estado
+
+El PPU nativo es el camino validado; queda pendiente decidir cuándo se
+retira el oráculo DocBoy del árbol. No hay commits en esta sesión.
+
+Backups: `tmp/20261116_124648/` (inicio) y `tmp/*.pre-trace`.
+
+---
+
+## 20. PROMOCIÓN A IMPLEMENTACIÓN FINAL (2026-11-16)
+
+`CpuMicro` es ya el único CPU: `QtreGB` lo instancia incondicionalmente y se
+han eliminado `Z80GB`, `operations.*` y `tests/test_cpu.cpp`. El timer se
+queda con la implementación DocBoy-style que acompaña al CPU de micro-ops; la
+rama legacy de `timer.cpp` y sus tests también se retiraron.
+
+`common.mk` ya no define `QTR_CPU_MICRO`, `QTR_PPU_V4` ni `QTR_PPU_FULL`; el
+flag de diagnóstico `QTR_CPU_WRITE_T3` también se eliminó dejando el
+comportamiento por defecto (flush de escritura en T1).
+
+### Validación final sin flags
+
+| Suite | Resultado |
+|---|---|
+| doctest | 80/80 (386 assertions) |
+| PPU acceptance | 12/12 |
+| mts | 34/34 |
+| blargg | 15/15 |
+| harness (BIOS) | 25 PASS / 0 FAIL / 8 SKIP |

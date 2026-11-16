@@ -173,3 +173,126 @@ con doctest 102/102, blargg 11/15 y mts 33/34. Los fallos restantes son de
 fase de escritura (t1) frente al timer/PPU (calibrados a t3).
 
 Backup de la sesión: `tmp/20261115_013151/`.
+
+---
+
+## 91. SESIÓN 2026-11-16 — baseline micro + PPU DocBoy restaurado
+
+El baseline de trabajo de v4 es **CPU micro + timer DocBoy + PPU DocBoy**
+(`QTR_CPU_MICRO=1` activa `QTR_PPU_FULL=1`). Verificado: harness 25/0/8 con
+BIOS, PPU acceptance 12/12, mts 34/34, blargg 15/15, doctest 89/89.
+
+El PPU legacy **no** es el baseline. El intento `PPUv4` nativo simplificado
+se archivó en `tmp/native_ppu_wip_20261116_020615/`; no pasa el harness y
+no está activo.
+
+El plan es sustituir el PPU DocBoy por código nativo pieza a pieza,
+manteniendo 25/0/8 como red de seguridad. El timer ya es nativo (no una
+copia de DocBoy), así que no requiere port separado.
+
+Detalle completo: `documentation/Game Boy/cpu-microops-handoff.md`, sección 18.
+
+---
+
+## 92. SESIÓN 2026-11-16 (continuación) — PPU v4 nativo en paridad total
+
+El PPU nativo `PPUv4` (`core/inc/ppu_v4.h`, `core/src/ppu_v4.cpp`, detrás de
+`QTR_PPU_V4=1`) alcanza **paridad completa con el oráculo DocBoy** en DMG:
+
+- harness mealybug + dmg-acid2: **25 PASS / 0 FAIL / 8 SKIP** (con BIOS)
+- PPU acceptance: **12/12** (incluye `intr_2_mode0_timing_sprites`)
+- mts: **34/34** · blargg: **15/15** · doctest: **89/89** (416 assertions)
+- build limpio (`make clean && make QTR_CPU_MICRO=1 QTR_PPU_V4=1`)
+
+### Piezas implementadas
+
+1. **Scaffold por dot**: 456 dots × 154 líneas, OAM scan par/impar/77/done,
+   transiciones de modo, STAT/LYC/IRQ con glitches DMG (línea 0 tras
+   turn-on, última línea VBlank, ventana de disable de LYC), locks de
+   VRAM/OAM, framebuffer y callback de frame.
+2. **Fetcher BG/ventana**: prefetcher, pixel-slice fetcher, FIFO, dirección
+   de tilemap/tile data recalculada en cada acceso (desync de bitplanes
+   DMG), glitches de ventana (`wx_0`, `multiple_wx`, `wx_4/5/6`) y push.
+3. **Fetcher OBJ**: lectura de tile number/attributes desde OAM, expansión
+   de bitplanes con X/Y flip, 8x16, mezcla en el OBJ FIFO con prioridad
+   (X menor; empate → primer OAM), interrupción/caché del fetch BG/ventana,
+   y selección final OBJ vs BG con `LCDC.OBJ_ENABLE`, opacidad,
+   `BG_OVER_OBJ` y `OBP0/OBP1`.
+
+### Hallazgo clave del último milestone
+
+La condición `is_bg_fifo_ready_to_be_popped()` debe bloquear los pops
+mientras haya entradas OAM pendientes en el LX actual y los OBJ estén
+habilitados:
+
+```cpp
+return !m_bg_fifo.empty() && !m_fetching_sprite &&
+       (m_oam_entries[m_lx].empty() || !m_lcdc.obj_enable);
+```
+
+Sin esa condición el pipeline BG iba ~2 tiles adelantado y fallaban
+`m3_lcdc_bg_map_change`, `m3_lcdc_bg_en_change`, `m3_scy_change`,
+`m3_lcdc_win_map_change`, etc. Al añadir el fetcher OBJ completo cayeron
+los 15 FAIL restantes de golpe.
+
+### Flag y selección
+
+- `QTR_PPU_V4=1` selecciona `PPUv4` (`using PPU = PPUv4` en `ppu.h`) y
+  excluye `QTR_PPU_FULL`.
+- `QTR_CPU_MICRO=1` sigue activando `QTR_PPU_FULL ?= 1` solo si no se pide
+  V4.
+- El PPU DocBoy (`PPUFull`) se conserva como oráculo hasta decisión
+  explícita; no se ha borrado nada.
+
+### Build / validación
+
+```sh
+make clean
+make QTR_CPU_MICRO=1 QTR_PPU_V4=1 -j$(nproc)
+make -C mts QTR_CPU_MICRO=1 QTR_PPU_V4=1
+make -C tests QTR_CPU_MICRO=1 QTR_PPU_V4=1
+make -C blargg QTR_CPU_MICRO=1 QTR_PPU_V4=1
+
+QTR_BIOS="$PWD/roms/bios/[BIOS] Nintendo Game Boy Boot ROM (World).gb" \
+  ./mts/compare_ppu_frames.sh
+```
+
+### Backups de la sesión
+
+- `tmp/20261116_124648/` (inicio de sesión, backup obligatorio).
+- `tmp/ppu_v4.cpp.pre-trace`, `tmp/mts_runner.cpp.pre-trace`,
+  `tmp/docboy_ppu.cpp.pre-trace` (instrumentación temporal; ya restaurada).
+
+---
+
+## 93. PROMOCIÓN A IMPLEMENTACIÓN FINAL (2026-11-16)
+
+El PPU nativo deja de ser una alternativa: `core/inc/ppu_v4.h` y
+`core/src/ppu_v4.cpp` se han movido a `core/inc/ppu.h` + `core/src/ppu.cpp`,
+la clase `PPUv4` pasa a llamarse `PPU`, y se han eliminado `PPULegacy`,
+`PPUFull`/`docboy_ppu.cpp`, el árbol `core/inc/docboy/` y `core/inc/utils/`.
+
+`common.mk` ya no tiene flags de selección (`QTR_PPU_V4`, `QTR_PPU_FULL`,
+`QTR_CPU_MICRO`): el build por defecto es la implementación final.
+
+### Validación sin flags (build limpio)
+
+| Suite | Resultado |
+|---|---|
+| harness mealybug + dmg-acid2 (BIOS) | 25 PASS / 0 FAIL / 8 SKIP |
+| PPU acceptance | 12/12 |
+| mts | 34/34 |
+| blargg | 15/15 |
+| doctest | 80/80 (386 assertions) |
+
+Los 8 SKIP siguen siendo ROMs sin PNG de referencia; se verificaron contra el
+oráculo DocBoy antes de retirarlo (`diff=0` en todos).
+
+### Limpieza asociada
+
+- `tests/test_cpu.cpp` se elimina junto con el CPU legacy `Z80GB`.
+- `timer.cpp/h` conserva solo la implementación DocBoy-style que acompaña al
+  CPU de micro-ops; se retiró la rama legacy y sus tests.
+- `documentation/`: se conservan `ppu.md` y `ppu-fetcher.md` como referencia
+  técnica. Los planes v3/v4 y el `timer.md` antiguo quedan en el histórico de
+  Git (copia local en `tmp/obsolete_docs_*`).

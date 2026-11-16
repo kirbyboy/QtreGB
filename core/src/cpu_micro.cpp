@@ -191,9 +191,7 @@ void CpuMicro::tick_t0()
 void CpuMicro::tick_t1()
 {
 	check_interrupt(0);
-#ifndef QTR_CPU_WRITE_T3
 	flush_write();
-#endif
 }
 
 void CpuMicro::tick_t2()
@@ -205,9 +203,6 @@ void CpuMicro::tick_t3()
 {
 	check_interrupt(2);
 	flush_read();
-#ifdef QTR_CPU_WRITE_T3
-	flush_write();
-#endif
 }
 
 void CpuMicro::tick_microop()

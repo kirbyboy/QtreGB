@@ -207,11 +207,7 @@ TEST_CASE("Bus: FF04-FF07 route to the timer")
 {
 	BusEnv env(0);
 
-#ifdef QTR_CPU_MICRO
 	CHECK(env.bus.read(0xFF04) == 0xAB);
-#else
-	CHECK(env.bus.read(0xFF04) == 0xAC);
-#endif
 	env.bus.write(0xFF04, 0xFF);
 	CHECK(env.bus.read(0xFF04) == 0x00); // any DIV write resets it
 	env.bus.write(0xFF05, 0x64);

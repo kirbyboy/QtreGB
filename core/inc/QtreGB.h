@@ -5,11 +5,7 @@
 #include <memory>
 
 #include "bus.h"
-#ifdef QTR_CPU_MICRO
 #include "cpu_micro.h"
-#else
-#include "Z80GB.h"
-#endif
 #include "memory.h"
 #include "cart.h"
 #include "io.h"
@@ -26,11 +22,7 @@
 namespace qtreGB
 {
 
-#ifdef QTR_CPU_MICRO
 using Cpu = CpuMicro;
-#else
-using Cpu = Z80GB;
-#endif
 
 using CpuState = Cpu::State;
 
