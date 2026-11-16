@@ -1,9 +1,10 @@
 #include "bus.h"
+#include "apu.h"
 #include "QtreGB.h"
 
 using namespace qtreGB;
 
-Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Memory* hram, IO* io, LCD* lcd, PPU* ppu, ICPURegisters* cpu_registers)
+Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Memory* hram, IO* io, LCD* lcd, PPU* ppu, APU* apu, ICPURegisters* cpu_registers)
 {
 	m_cart = cart;
 	m_timer = timer;
@@ -14,6 +15,7 @@ Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Mem
 	m_io = io;
 	m_lcd = lcd;
 	m_ppu = ppu;
+	m_apu = apu;
 
 	m_cpu_registers = cpu_registers;
 
@@ -96,6 +98,11 @@ u8 Bus::read(u16 address)
 		else if(address == 0xFF07)
 		{
 			return m_timer->read_tac();
+		}
+		// audio
+		else if(address >= 0xFF10 && address <= 0xFF3F)
+		{
+			return m_apu->read(address);
 		}
 		else if(address >= 0xFF40 && address <= 0xFF4B)
 		{
@@ -192,6 +199,11 @@ void Bus::write(u16 address, u8 value)
 		else if(address == 0xFF0F)
 		{
 			m_cpu_registers->write_IF(value);
+		}
+		// audio
+		else if(address >= 0xFF10 && address <= 0xFF3F)
+		{
+			m_apu->write(address, value);
 		}
 		else if(address >= 0xFF40 && address <= 0xFF4B)
 		{

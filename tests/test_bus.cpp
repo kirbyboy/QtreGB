@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "bus.h"
+#include "apu.h"
 #include "error_reporter.h"
 
 #include <vector>
@@ -47,6 +48,7 @@ struct BusEnv
 	IO io;
 	LCD lcd;
 	PPU ppu;
+	APU apu;
 	CpuRegsStub cpu_regs;
 	Bus bus;
 
@@ -54,11 +56,12 @@ struct BusEnv
 		wram(0x2000),
 		hram(0x80),
 		ppu(&lcd),
-		bus(&cart, &timer, &dma, &gamepad, &wram, &hram, &io, &lcd, &ppu, &cpu_regs)
+		bus(&cart, &timer, &dma, &gamepad, &wram, &hram, &io, &lcd, &ppu, &apu, &cpu_regs)
 	{
 		cart.connect_error_reporter(&errors);
 		CHECK(cart.load_cart(rom) == 0);
 		timer.timer_init();
+		apu.reset();
 		ppu.ppu_init();	// mirrors the QtreGB constructor initialization
 
 		gamepad.m_button_start = false;
@@ -201,6 +204,25 @@ TEST_CASE("Bus: FF00 routes to the gamepad and reacts to selection")
 	CHECK(env.bus.read(0xFF00) == 0xCE); // A clears bit 0
 	env.bus.write(0xFF00, 0x20);
 	CHECK(env.bus.read(0xFF00) == 0xEF); // button row deselected: A hidden
+}
+
+TEST_CASE("Bus: FF10-FF3F route to the APU")
+{
+	BusEnv env(0);
+
+	CHECK(env.bus.read(0xFF26) == 0x70);	// APU off after reset
+	env.bus.write(0xFF26, 0x80);
+	CHECK(env.bus.read(0xFF26) == 0xF0);
+
+	env.bus.write(0xFF11, 0x80);
+	CHECK(env.bus.read(0xFF11) == 0x80);
+
+	env.bus.write(0xFF30, 0xA5);
+	CHECK(env.bus.read(0xFF30) == 0xA5);
+
+	env.bus.write(0xFF26, 0x00);
+	CHECK(env.bus.read(0xFF11) == 0x00);
+	CHECK(env.bus.read(0xFF26) == 0x70);
 }
 
 TEST_CASE("Bus: FF04-FF07 route to the timer")

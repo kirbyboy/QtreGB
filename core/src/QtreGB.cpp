@@ -27,11 +27,12 @@ QtreGB::QtreGB() :
 	m_hram(Memory(0x80)),
 	m_io(IO()),
 	m_timer(Timer()),
+	m_apu(),
 	m_lcd(LCD()),
 	m_ppu(PPU(&m_lcd)),
 	m_dma(DMA()),
 	m_gamepad(Gamepad()),
-	m_bus(Bus(&m_cart, &m_timer, &m_dma, &m_gamepad, &m_wram, &m_hram, &m_io, &m_lcd, &m_ppu, static_cast<ICPURegisters*>(&m_cpu))),
+	m_bus(Bus(&m_cart, &m_timer, &m_dma, &m_gamepad, &m_wram, &m_hram, &m_io, &m_lcd, &m_ppu, &m_apu, static_cast<ICPURegisters*>(&m_cpu))),
 	m_frame_ready(false),
 	m_bus_cpu(BusCpuView(&m_bus, &m_ppu, &m_dma))
 {
@@ -166,6 +167,7 @@ void QtreGB::tick_once()
 		m_timer.timer_tick();
 	}
 	m_ppu.ppu_tick();
+	m_apu.tick();
 
 	if(m_cpu.is_end_m_cycle())
 	{
@@ -240,6 +242,7 @@ void QtreGB::reset_machine()
 	m_bus.set_boot_rom_enabled(m_has_boot_rom);
 	m_cpu.reset(m_has_boot_rom);
 	m_timer.timer_init();
+	m_apu.reset();
 	m_ppu.ppu_init(m_has_boot_rom);
 	m_dma.reset();
 	m_clock.reset();

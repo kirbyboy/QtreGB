@@ -10,6 +10,7 @@
 #include "cart.h"
 #include "io.h"
 #include "timer.h"
+#include "apu.h"
 #include "ppu.h"
 #include "dma.h"
 #include "lcd.h"
@@ -53,6 +54,7 @@ class QtreGB
 		Memory m_hram;
 		IO m_io;
 		Timer m_timer;
+		APU m_apu;
 		LCD m_lcd;
 		PPU m_ppu;
 		DMA m_dma;

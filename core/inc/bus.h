@@ -21,12 +21,13 @@ namespace qtreGB
 {
 
 class QtreGB;
+class APU;
 
 class Bus : public IBus
 {
 	public:
 
-		Bus(Cart *cart, Timer *timer, DMA *dma, Gamepad* gamepad, Memory* wram, Memory* hram, IO* io, LCD* lcd, PPU* ppu, ICPURegisters *cpu_registers);
+		Bus(Cart *cart, Timer *timer, DMA *dma, Gamepad* gamepad, Memory* wram, Memory* hram, IO* io, LCD* lcd, PPU* ppu, APU* apu, ICPURegisters *cpu_registers);
 
 		u8 read(u16 address) override;
 		void write(u16 address, u8 value) override;
@@ -48,6 +49,7 @@ class Bus : public IBus
 		IO *m_io;
 		LCD *m_lcd;
 		PPU *m_ppu;
+		APU *m_apu;
 		ICPURegisters *m_cpu_registers;
 };
 
