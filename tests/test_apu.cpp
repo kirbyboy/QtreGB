@@ -127,6 +127,8 @@ void power_on(APU& apu)
 {
 	apu.reset();
 	apu.write(0xFF26, 0x80);
+	apu.write(0xFF24, 0x77);	// master volume
+	apu.write(0xFF25, 0xFF);	// all channels to both sides
 }
 
 void trigger_ch1(APU& apu, u8 duty, u8 volume, u16 frequency)
@@ -342,4 +344,240 @@ TEST_CASE("APU: resampling targets the configured sample rate")
 	}
 
 	CHECK(apu.available_frames() == 549);	// 48000 * 48000 / 4194304
+}
+
+void trigger_ch2(APU& apu, u8 duty, u8 volume, u16 frequency)
+{
+	apu.write(0xFF16, static_cast<u8>(duty << 6));
+	apu.write(0xFF17, static_cast<u8>(volume << 4));
+	apu.write(0xFF18, static_cast<u8>(frequency & 0xFF));
+	apu.write(0xFF19, static_cast<u8>(0x80 | ((frequency >> 8) & 0x07)));
+}
+
+TEST_CASE("APU: CH2 trigger requires an enabled DAC")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF17, 0x00);	// DAC off
+	apu.write(0xFF19, 0x87);	// trigger
+	CHECK(apu.channel_output(APU::CH2) == 0);
+	CHECK((apu.read(0xFF26) & 0x02) == 0x00);
+
+	apu.write(0xFF17, 0xF0);	// DAC on, volume 15
+	apu.write(0xFF19, 0x87);	// trigger again
+	CHECK((apu.read(0xFF26) & 0x02) == 0x02);
+}
+
+TEST_CASE("APU: CH2 duty step advances at the channel period")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch2(apu, 3, 15, 0x7FF);	// duty 3, frequency = 0x7FF
+
+	CHECK(apu.channel_output(APU::CH2) == 0);	// step 0 is low
+
+	const u8 expected[8] = {15, 15, 15, 15, 15, 15, 0, 0};
+	for(int step = 1; step <= 8; ++step)
+	{
+		for(int i = 0; i < 4; ++i)
+		{
+			apu.tick();
+		}
+		CHECK(apu.channel_output(APU::CH2) == expected[step - 1]);
+	}
+}
+
+TEST_CASE("APU: NR52 reports both pulse channels")
+{
+	APU apu;
+	power_on(apu);
+
+	trigger_ch1(apu, 2, 15, 0x7FF);
+	CHECK((apu.read(0xFF26) & 0x03) == 0x01);
+
+	trigger_ch2(apu, 2, 15, 0x7FF);
+	CHECK((apu.read(0xFF26) & 0x03) == 0x03);
+
+	apu.write(0xFF26, 0x00);
+	CHECK((apu.read(0xFF26) & 0x03) == 0x00);
+}
+
+TEST_CASE("APU: mixer combines both pulse channels")
+{
+	APU apu;
+	power_on(apu);
+
+	trigger_ch1(apu, 2, 15, 0);	// duty 2, step 0 is high
+	trigger_ch2(apu, 2, 15, 0);
+
+	for(int i = 0; i < 88; ++i)
+	{
+		apu.tick();
+	}
+
+	int16_t buffer[2];
+	REQUIRE(apu.read_samples(buffer, 1) == 1);
+	CHECK(buffer[0] == -24000);	// (-8) + (-8), 1500 per unit
+	CHECK(buffer[1] == -24000);
+}
+
+TEST_CASE("APU: NR51 pans the two pulse channels")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF25, 0x12);	// CH1 left, CH2 right
+	trigger_ch1(apu, 2, 15, 0);	// centered -8
+	trigger_ch2(apu, 2, 5, 0);	// centered +2
+
+	for(int i = 0; i < 88; ++i)
+	{
+		apu.tick();
+	}
+
+	int16_t buffer[2];
+	REQUIRE(apu.read_samples(buffer, 1) == 1);
+	CHECK(buffer[0] == -12000);
+	CHECK(buffer[1] == 3000);
+}
+
+TEST_CASE("APU: NR50 scales the mixed output")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF24, 0x00);	// both sides at 1/8 volume
+	trigger_ch1(apu, 2, 15, 0);
+	trigger_ch2(apu, 2, 15, 0);
+
+	for(int i = 0; i < 88; ++i)
+	{
+		apu.tick();
+	}
+
+	int16_t buffer[2];
+	REQUIRE(apu.read_samples(buffer, 1) == 1);
+	CHECK(buffer[0] == -3000);
+	CHECK(buffer[1] == -3000);
+}
+
+namespace
+{
+void trigger_ch3(APU& apu, u8 level, u16 frequency)
+{
+	apu.write(0xFF1A, 0x80);	// DAC on
+	apu.write(0xFF1C, static_cast<u8>((level & 0x03) << 5));
+	apu.write(0xFF1D, static_cast<u8>(frequency & 0xFF));
+	apu.write(0xFF1E, static_cast<u8>(0x80 | ((frequency >> 8) & 0x07)));
+}
+}
+
+TEST_CASE("APU: CH3 trigger requires an enabled DAC")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF1A, 0x00);	// DAC off
+	apu.write(0xFF1E, 0x87);	// trigger
+	CHECK(apu.channel_output(APU::CH3) == 0);
+	CHECK((apu.read(0xFF26) & 0x04) == 0x00);
+
+	apu.write(0xFF1A, 0x80);	// DAC on
+	apu.write(0xFF1E, 0x87);	// trigger again
+	CHECK((apu.read(0xFF26) & 0x04) == 0x04);
+}
+
+TEST_CASE("APU: CH3 plays wave RAM nibbles")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF30, 0x12);
+	apu.write(0xFF31, 0x34);
+	trigger_ch3(apu, 1, 0x7FF);	// level 1, 2 T-cycles per sample
+
+	CHECK(apu.channel_output(APU::CH3) == 0);	// sample buffer starts at 0
+
+	apu.tick();
+	apu.tick();
+	CHECK(apu.channel_output(APU::CH3) == 2);	// index 1: lower nibble of FF30
+
+	apu.tick();
+	apu.tick();
+	CHECK(apu.channel_output(APU::CH3) == 3);	// index 2: upper nibble of FF31
+
+	apu.tick();
+	apu.tick();
+	CHECK(apu.channel_output(APU::CH3) == 4);	// index 3: lower nibble of FF31
+}
+
+TEST_CASE("APU: CH3 output level shifts the sample")
+{
+	APU apu;
+	power_on(apu);
+
+	apu.write(0xFF30, 0x0F);	// lower nibble = 15
+	trigger_ch3(apu, 1, 0x7FF);
+	apu.tick();
+	apu.tick();
+	CHECK(apu.channel_output(APU::CH3) == 15);
+
+	apu.write(0xFF1C, 0x40);	// 50 %
+	CHECK(apu.channel_output(APU::CH3) == 7);
+
+	apu.write(0xFF1C, 0x60);	// 25 %
+	CHECK(apu.channel_output(APU::CH3) == 3);
+
+	apu.write(0xFF1C, 0x00);	// mute
+	CHECK(apu.channel_output(APU::CH3) == 0);
+
+	apu.write(0xFF1C, 0x20);	// 100 %
+	CHECK(apu.channel_output(APU::CH3) == 15);
+}
+
+TEST_CASE("APU: turning the CH3 DAC off disables the channel")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch3(apu, 1, 0x7FF);
+	CHECK((apu.read(0xFF26) & 0x04) == 0x04);
+
+	apu.write(0xFF1A, 0x00);
+	CHECK(apu.channel_output(APU::CH3) == 0);
+	CHECK((apu.read(0xFF26) & 0x04) == 0x00);
+}
+
+TEST_CASE("APU: power off disables CH3")
+{
+	APU apu;
+	power_on(apu);
+	trigger_ch3(apu, 1, 0x7FF);
+	CHECK((apu.read(0xFF26) & 0x04) == 0x04);
+
+	apu.write(0xFF26, 0x00);
+	CHECK(apu.channel_output(APU::CH3) == 0);
+	CHECK((apu.read(0xFF26) & 0x04) == 0x00);
+}
+
+TEST_CASE("APU: mixer includes CH3")
+{
+	APU apu;
+	power_on(apu);
+
+	for(int i = 0; i < 16; ++i)
+	{
+		apu.write(static_cast<u16>(0xFF30 + i), 0xFF);
+	}
+	trigger_ch3(apu, 1, 0x7FF);
+
+	for(int i = 0; i < 88; ++i)
+	{
+		apu.tick();
+	}
+
+	int16_t buffer[2];
+	REQUIRE(apu.read_samples(buffer, 1) == 1);
+	CHECK(buffer[0] == -12000);	// sample 15 -> centered -8
+	CHECK(buffer[1] == -12000);
 }

@@ -89,6 +89,21 @@ class APU
 		Pulse m_ch1;
 		Pulse m_ch2;
 
+		// Wave channel state (CH3).
+		struct Wave
+		{
+			bool enabled = false;
+			u16 frequency = 0;		// 0..2047
+			int timer = 0;			// T-cycles until the next sample
+			u8 sample_index = 0;	// 0..31
+			u8 sample = 0;			// 0..15
+			u8 level = 0;			// NR32 bits 6-5
+			u16 length = 0;			// restante (máx. 256)
+			bool length_enable = false;
+		};
+
+		Wave m_ch3;
+
 		// Frame sequencer clock: one step every 8192 T-cycles (512 Hz).
 		u32 m_frame_counter = 0;
 		u8 m_frame_step = 0;
@@ -113,8 +128,13 @@ class APU
 			u16 frequency, bool dac_enabled);
 		u8 pulse_output(const Pulse& channel) const;
 
+		void tick_wave();
+		void trigger_wave();
+		u8 wave_output() const;
+
 		bool ch1_dac_enabled() const { return (m_nr12 & 0xF8) != 0; }
 		bool ch2_dac_enabled() const { return (m_nr22 & 0xF8) != 0; }
+		bool ch3_dac_enabled() const { return (m_nr30 & 0x80) != 0; }
 };
 
 } // namespace qtreGB

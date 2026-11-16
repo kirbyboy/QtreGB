@@ -13,7 +13,10 @@ constexpr u8 DUTY[4][8] = {
 	{0, 1, 1, 1, 1, 1, 1, 0},	// 75 %
 };
 
-u16 pulse_frequency(u8 low, u8 high)
+// NR32 output level: 0 mutes, 1 is 100 %, 2 is 50 %, 3 is 25 %.
+constexpr u8 WAVE_SHIFT[4] = {4, 0, 1, 2};
+
+u16 channel_frequency(u8 low, u8 high)
 {
 	return static_cast<u16>(((high & 0x07) << 8) | low);
 }
@@ -66,6 +69,7 @@ void APU::tick()
 
 	tick_pulse(m_ch1);
 	tick_pulse(m_ch2);
+	tick_wave();
 
 	// Nearest-neighbour resampling: emit one frame every CLOCK/SAMPLE_RATE
 	// T-cycles (about 87.38 at 48 kHz).
@@ -87,10 +91,11 @@ u8 APU::read(u16 address)
 	if(address == 0xFF26)
 	{
 		// Bits 6-4 are unused on the DMG and read as 1. Bits 3-0 report the
-		// channel status; only the two pulse channels exist for now.
+		// channel status; only CH1-CH3 exist for now.
 		const u8 status = static_cast<u8>(
 			(m_ch1.enabled ? 0x01 : 0x00) |
-			(m_ch2.enabled ? 0x02 : 0x00));
+			(m_ch2.enabled ? 0x02 : 0x00) |
+			(m_ch3.enabled ? 0x04 : 0x00));
 		return static_cast<u8>(0x70 | (m_powered ? 0x80 : 0x00) | status);
 	}
 
@@ -168,11 +173,11 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF13:
 			m_nr13 = value;
-			m_ch1.frequency = pulse_frequency(m_nr13, m_nr14);
+			m_ch1.frequency = channel_frequency(m_nr13, m_nr14);
 			break;
 		case 0xFF14:
 			m_nr14 = static_cast<u8>(value & 0x47);
-			m_ch1.frequency = pulse_frequency(m_nr13, m_nr14);
+			m_ch1.frequency = channel_frequency(m_nr13, m_nr14);
 			if((value & 0x80) != 0)
 			{
 				trigger_pulse(m_ch1, m_nr11, m_nr12, m_ch1.frequency,
@@ -192,22 +197,43 @@ void APU::write(u16 address, u8 value)
 			break;
 		case 0xFF18:
 			m_nr23 = value;
-			m_ch2.frequency = pulse_frequency(m_nr23, m_nr24);
+			m_ch2.frequency = channel_frequency(m_nr23, m_nr24);
 			break;
 		case 0xFF19:
 			m_nr24 = static_cast<u8>(value & 0x47);
-			m_ch2.frequency = pulse_frequency(m_nr23, m_nr24);
+			m_ch2.frequency = channel_frequency(m_nr23, m_nr24);
 			if((value & 0x80) != 0)
 			{
 				trigger_pulse(m_ch2, m_nr21, m_nr22, m_ch2.frequency,
 					ch2_dac_enabled());
 			}
 			break;
-		case 0xFF1A: m_nr30 = static_cast<u8>(value & 0x80); break;
-		case 0xFF1B: m_nr31 = value; break;
-		case 0xFF1C: m_nr32 = static_cast<u8>(value & 0x60); break;
-		case 0xFF1D: m_nr33 = value; break;
-		case 0xFF1E: m_nr34 = static_cast<u8>(value & 0x47); break;
+		case 0xFF1A:
+			m_nr30 = static_cast<u8>(value & 0x80);
+			if(!ch3_dac_enabled())
+			{
+				m_ch3.enabled = false;
+			}
+			break;
+		case 0xFF1B:
+			m_nr31 = value;
+			break;
+		case 0xFF1C:
+			m_nr32 = static_cast<u8>(value & 0x60);
+			m_ch3.level = static_cast<u8>((m_nr32 >> 5) & 0x03);
+			break;
+		case 0xFF1D:
+			m_nr33 = value;
+			m_ch3.frequency = channel_frequency(m_nr33, m_nr34);
+			break;
+		case 0xFF1E:
+			m_nr34 = static_cast<u8>(value & 0x47);
+			m_ch3.frequency = channel_frequency(m_nr33, m_nr34);
+			if((value & 0x80) != 0)
+			{
+				trigger_wave();
+			}
+			break;
 		case 0xFF20: m_nr41 = static_cast<u8>(value & 0x3F); break;
 		case 0xFF21: m_nr42 = value; break;
 		case 0xFF22: m_nr43 = static_cast<u8>(value & 0xF7); break;
@@ -258,6 +284,7 @@ void APU::clear_registers()
 
 	m_ch1 = Pulse{};
 	m_ch2 = Pulse{};
+	m_ch3 = Wave{};
 }
 
 u8 APU::channel_output(Channel channel) const
@@ -266,6 +293,7 @@ u8 APU::channel_output(Channel channel) const
 	{
 		case CH1: return pulse_output(m_ch1);
 		case CH2: return pulse_output(m_ch2);
+		case CH3: return wave_output();
 		default: return 0;
 	}
 }
@@ -276,6 +304,7 @@ bool APU::is_channel_enabled(Channel channel) const
 	{
 		case CH1: return m_ch1.enabled;
 		case CH2: return m_ch2.enabled;
+		case CH3: return m_ch3.enabled;
 		default: return false;
 	}
 }
@@ -323,6 +352,48 @@ void APU::trigger_pulse(Pulse& channel, u8 duty_reg, u8 env_reg,
 	channel.enabled = dac_enabled;
 }
 
+u8 APU::wave_output() const
+{
+	if(!m_ch3.enabled)
+	{
+		return 0;
+	}
+
+	return m_ch3.sample >> WAVE_SHIFT[m_ch3.level & 0x03];
+}
+
+void APU::tick_wave()
+{
+	if(!m_ch3.enabled)
+	{
+		return;
+	}
+
+	if(m_ch3.timer > 0)
+	{
+		--m_ch3.timer;
+	}
+	if(m_ch3.timer == 0)
+	{
+		m_ch3.timer = static_cast<int>((2048 - m_ch3.frequency) * 2);
+		m_ch3.sample_index = static_cast<u8>((m_ch3.sample_index + 1) & 0x1F);
+
+		const u8 byte = m_wave_ram[m_ch3.sample_index >> 1];
+		m_ch3.sample = (m_ch3.sample_index & 0x01) ? (byte & 0x0F) : (byte >> 4);
+	}
+}
+
+void APU::trigger_wave()
+{
+	m_ch3.frequency = channel_frequency(m_nr33, m_nr34);
+	m_ch3.level = static_cast<u8>((m_nr32 >> 5) & 0x03);
+
+	m_ch3.sample_index = 0;
+	m_ch3.sample = 0;
+	m_ch3.timer = static_cast<int>((2048 - m_ch3.frequency) * 2);
+	m_ch3.enabled = ch3_dac_enabled();
+}
+
 void APU::mix_and_emit()
 {
 	int left = 0;
@@ -330,6 +401,7 @@ void APU::mix_and_emit()
 
 	mix_channel(CH1, left, right);
 	mix_channel(CH2, left, right);
+	mix_channel(CH3, left, right);
 
 	// NR50 master volume: 0 means 1/8 and 7 means 8/8.
 	left = left * (((m_nr50 >> 4) & 0x07) + 1) / 8;
