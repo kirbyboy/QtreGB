@@ -17,8 +17,6 @@ using namespace qtreGB;
 constexpr int GB_XRES = 160;
 constexpr int GB_YRES = 144;
 
-constexpr int SCALE = 4;
-
 enum class GbButton : u8
 {
 	Right = 0,
@@ -56,6 +54,7 @@ class EmulatorInstance
 		bool boot_rom_active() const { return m_emulator->has_boot_rom(); }
 		void tick();
 		bool get_frame_ready();
+		bool is_ready() const { return m_is_emulator_ready; }
 		void drain_audio();
 
 	private:
@@ -76,7 +75,6 @@ class EmulatorInstance
 		void save_battery();
 		void load_battery();
 		void set_button(u8 button, bool released);
-		void fill_rect(int x, int y, int w, int h, u32 color);
 
 };
 

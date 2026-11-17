@@ -13,6 +13,8 @@ class IGuiBackend
 		virtual void* createTexture(int width, int height) = 0;
 		virtual void updateTexture(void* texture_id, const uint32_t* pixels, int width, int height) = 0;
 		virtual void destroyTexture(void* textureId) = 0;
+		virtual bool vsync_enabled() const = 0;
+		virtual void toggle_fullscreen() = 0;
 };
 
 #endif

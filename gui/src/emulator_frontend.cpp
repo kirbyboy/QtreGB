@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 
 #include "emulator_frontend.h"
@@ -39,9 +41,12 @@ void EmulatorFrontend::draw_main_window()
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    // Let the screen use the whole window below the menu bar so integer
+    // scaling can use the largest possible factor.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 
     ImGui::Begin("MainWindow", nullptr, window_flags);
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
 
     // Top menu
     if (ImGui::BeginMenuBar())
@@ -136,6 +141,15 @@ void EmulatorFrontend::draw_main_window()
 			ImGui::EndMenu();
 		}
 
+		if(ImGui::BeginMenu("View"))
+		{
+			if(ImGui::MenuItem("Fullscreen (F)"))
+			{
+				m_backend->toggle_fullscreen();
+			}
+			ImGui::EndMenu();
+		}
+
 		if(ImGui::BeginMenu("Debug"))
 		{
 			if(ImGui::MenuItem("PPU"))
@@ -159,15 +173,42 @@ void EmulatorFrontend::draw_main_window()
 
         // Full area available inside the main window
         ImVec2 avail = ImGui::GetContentRegionAvail();
+        if(avail.x < 1.0f || avail.y < 1.0f)
+        {
+            ImGui::End();
+            return;
+        }
 
-        // Scale to keep aspect ratio
-        float scale = std::min(avail.x / nativeW, avail.y / nativeH);
-        ImVec2 finalSize(nativeW * scale, nativeH * scale);
+        // Prefer integer scaling: each Game Boy pixel maps to the same number
+        // of screen pixels. Fractional scaling is what makes some lines look
+        // thicker/thinner or "cut". On HiDPI displays the integer factor must
+        // be computed in physical pixels, not logical ImGui units.
+        const ImVec2 fb_scale = ImGui::GetIO().DisplayFramebufferScale;
+        const float scale_x = fb_scale.x > 0.0f ? fb_scale.x : 1.0f;
+        const float scale_y = fb_scale.y > 0.0f ? fb_scale.y : 1.0f;
+        const int scaleX = static_cast<int>(avail.x * scale_x) / nativeW;
+        const int scaleY = static_cast<int>(avail.y * scale_y) / nativeH;
+        const int integerScale = std::max(1, std::min(scaleX, scaleY));
 
-        // Center the image
-        ImVec2 cursor = ImGui::GetCursorPos();
-        ImVec2 offset((avail.x - finalSize.x) * 0.5f, (avail.y - finalSize.y) * 0.5f);
-        ImGui::SetCursorPos(ImVec2(cursor.x + offset.x, cursor.y + offset.y));
+        ImVec2 finalSize(nativeW * integerScale / scale_x,
+            nativeH * integerScale / scale_y);
+        if(finalSize.x > avail.x || finalSize.y > avail.y)
+        {
+            // Window smaller than 160x144: keep the aspect ratio, even if the
+            // result has to be fractional.
+            const float fit = std::min(avail.x / nativeW, avail.y / nativeH);
+            finalSize = ImVec2(nativeW * fit, nativeH * fit);
+        }
+
+        // Center the image, but snap it to whole physical pixels. With
+        // nearest filtering, a .5 px offset makes some columns/rows one pixel
+        // wider, which is especially visible while scrolling vertically.
+        ImVec2 screen_pos = ImGui::GetCursorScreenPos();
+        const ImVec2 offset((avail.x - finalSize.x) * 0.5f,
+            (avail.y - finalSize.y) * 0.5f);
+        screen_pos.x = std::floor((screen_pos.x + std::max(0.0f, offset.x)) * scale_x) / scale_x;
+        screen_pos.y = std::floor((screen_pos.y + std::max(0.0f, offset.y)) * scale_y) / scale_y;
+        ImGui::SetCursorScreenPos(screen_pos);
 
         // Draw the emulator framebuffer
         ImGui::Image(textureId, finalSize);

@@ -1,5 +1,6 @@
 #ifndef QTREGB_CART_MBC1_H
 #define QTREGB_CART_MBC1_H
+#include <cstddef>
 #include <vector>
 
 #include "types.h"
@@ -28,8 +29,15 @@ class CartMBC1 : public InternalCart
 		std::vector<Memory> m_ram;
 		bool m_banking_mode;	// 0 simple, 1 advanced
 		bool m_ram_enable;
+		bool m_mbc1m;
 		u8 m_rom_ram_bank;
 		u8 m_rom_bank;
+
+		size_t rom_bank_count() const;
+		size_t selected_rom_bank() const;
+		size_t bank0_rom_bank() const;
+		size_t selected_ram_bank() const;
+		bool detect_mbc1m() const;
 };
 
 

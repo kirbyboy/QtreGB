@@ -18,10 +18,13 @@ class SDLRendererBackend : public IGuiBackend
 		void* createTexture(int width, int height) override;
 		void updateTexture(void* textureId, const uint32_t* pixels, int width, int height) override;
 		void destroyTexture(void* textureId) override;
+		bool vsync_enabled() const override { return m_vsync; }
+		void toggle_fullscreen() override;
 
 	private:
 		SDL_Window* m_window;
 		SDL_Renderer* m_renderer;
+		bool m_vsync = false;
 		std::unordered_map<void*, SDL_Texture*> m_textures;
 };
 

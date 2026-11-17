@@ -1,6 +1,8 @@
 #ifndef QTREGB_CART_H
 #define QTREGB_CART_H
 
+#include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -33,9 +35,16 @@ class Cart
 		std::vector<u8> read_battery_ram();
 		bool write_battery_ram(const std::vector<u8>& data);
 
+		// Full battery payload: RAM plus RTC state for MBC3.
+		std::vector<u8> read_battery_data();
+
 		// Battery-backed RAM persistence (.sav next to the ROM).
 		bool save_battery_ram(const std::string& path);
 		bool load_battery_ram(const std::string& path);
+
+		// Overrides the host clock used by MBC3 RTC (tests). Returns
+		// microseconds since the Unix epoch.
+		void set_rtc_clock(std::function<int64_t()> now);
 
 	private:
 		void report(ErrorCode code);
@@ -43,6 +52,7 @@ class Cart
 		InternalCart* m_internal;
 		ErrorReporter* m_errors = nullptr;
 		bool m_has_battery = false;
+		std::function<int64_t()> m_rtc_now;
 
 };
 

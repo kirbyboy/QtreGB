@@ -9,12 +9,12 @@ m_backend(backend),
 m_is_frame_ready(false),
 m_is_emulator_ready(false)
 {
-	m_frame_buffer.resize(GB_XRES * SCALE * GB_YRES * SCALE, 0);
+	m_frame_buffer.resize(GB_XRES * GB_YRES, 0);
 
 	// Create texture using the backend
 	if(m_backend)
 	{
-		m_texture_id = m_backend->createTexture(GB_XRES * SCALE, GB_YRES * SCALE);
+		m_texture_id = m_backend->createTexture(GB_XRES, GB_YRES);
 	}
 
 	m_emulator = std::unique_ptr<QtreGB>(new QtreGB());
@@ -91,26 +91,13 @@ void EmulatorInstance::update_frame(const u32 *palette)
 		return;
 	}
 
-	std::vector<u8> video_buffer = m_emulator->m_ppu.get_video_buffer();
-
-	SDL_Rect rc;
-    rc.x = rc.y = 0;
-    rc.w = rc.h = 0;
-
-	for (int line_num = 0; line_num < PPU::YRES; line_num++)
+	const std::vector<u8>& video_buffer = m_emulator->m_ppu.get_video_buffer();
+	for(size_t i = 0; i < m_frame_buffer.size(); i++)
 	{
-		for (int x = 0; x < PPU::XRES; x++)
-		{
-			rc.x = x * SCALE;
-			rc.y = line_num * SCALE;
-			rc.w = SCALE;
-			rc.h = SCALE;
-
-			fill_rect(rc.x, rc.y, rc.w, rc.h, palette[video_buffer[x + line_num * PPU::XRES]]);
-		}
+		m_frame_buffer[i] = palette[video_buffer[i] & 0x03];
 	}
 
-	m_backend->updateTexture(m_texture_id, m_frame_buffer.data(), GB_XRES * 4, GB_YRES * 4);
+	m_backend->updateTexture(m_texture_id, m_frame_buffer.data(), GB_XRES, GB_YRES);
 }
 
 void *EmulatorInstance::get_texture_ID() const
@@ -120,7 +107,7 @@ void *EmulatorInstance::get_texture_ID() const
 
 std::pair<int, int> EmulatorInstance::get_texture_size() const
 {
-	return {GB_XRES * SCALE, GB_YRES * SCALE};
+	return {GB_XRES, GB_YRES};
 }
 
 void EmulatorInstance::press_button(u8 button)
@@ -240,24 +227,4 @@ void EmulatorInstance::set_button(u8 button, bool released)
 		case 6: m_emulator->m_gamepad.m_button_start = released; break;
 		case 7: m_emulator->m_gamepad.m_button_select = released; break;
 	}
-}
-
-void EmulatorInstance::fill_rect(int x, int y, int w, int h, u32 color)
-{
-    int maxW = GB_XRES * SCALE;
-    int maxH = GB_YRES * SCALE;
-
-    // Clamp the rectangle borders
-    int x0 = std::max(0, x);
-    int y0 = std::max(0, y);
-    int x1 = std::min(x + w, maxW);
-    int y1 = std::min(y + h, maxH);
-
-    for (int yy = y0; yy < y1; yy++)
-    {
-        for (int xx = x0; xx < x1; xx++)
-        {
-            m_frame_buffer[yy * maxW + xx] = color;
-        }
-    }
 }

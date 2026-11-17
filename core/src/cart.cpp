@@ -2,15 +2,25 @@
 #include "cart.h"
 #include "cart_no_mbc.h"
 #include "cart_mbc1.h"
+#include "cart_mbc2.h"
+#include "cart_mbc3.h"
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <fstream>
 #include <iterator>
+#include <utility>
 
 using namespace qtreGB;
 
 Cart::Cart() : m_internal(nullptr)
 {
+	m_rtc_now = []
+	{
+		return std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count();
+	};
 }
 
 Cart::~Cart()
@@ -82,6 +92,20 @@ u8 Cart::load_cart(std::vector<u8> rom)
 			internal = new CartMBC1();
 			has_battery = rom[0x0147] == 3;
 			break;
+		case 5:
+		case 6:
+			internal = new CartMBC2();
+			has_battery = rom[0x0147] == 6;
+			break;
+		case 0x0F:
+		case 0x10:
+		case 0x11:
+		case 0x12:
+		case 0x13:
+			internal = new CartMBC3(m_rtc_now);
+			has_battery = rom[0x0147] == 0x0F || rom[0x0147] == 0x10 ||
+				rom[0x0147] == 0x13;
+			break;
 		default:
 			report(ErrorCode::CART_TYPE_UNSUPPORTED);
 			return 4;
@@ -90,15 +114,23 @@ u8 Cart::load_cart(std::vector<u8> rom)
 	internal->load_rom(rom);
 
 	// RAM
-	switch(rom[0x0149])
+	if(rom[0x0147] == 5 || rom[0x0147] == 6)
 	{
-		case 0: internal->set_ram_banks(0); break;
-		case 1: internal->set_ram_banks(1); break;	// 2KB, one bank here
-		case 2: internal->set_ram_banks(1); break;
-		case 3: internal->set_ram_banks(4); break;
-		case 4: internal->set_ram_banks(16); break;
-		case 5: internal->set_ram_banks(8); break;
-		default: break;
+		// MBC2 has 512 x 4 bits of built-in RAM; the header RAM size is 0.
+		internal->set_ram_banks(1);
+	}
+	else
+	{
+		switch(rom[0x0149])
+		{
+			case 0: internal->set_ram_banks(0); break;
+			case 1: internal->set_ram_banks(1); break;	// 2KB, one bank here
+			case 2: internal->set_ram_banks(1); break;
+			case 3: internal->set_ram_banks(4); break;
+			case 4: internal->set_ram_banks(16); break;
+			case 5: internal->set_ram_banks(8); break;
+			default: break;
+		}
 	}
 
 	if(m_internal != nullptr)
@@ -155,20 +187,27 @@ bool Cart::write_battery_ram(const std::vector<u8>& data)
 	{
 		return false;
 	}
-
-	size_t offset = 0;
-	for(Memory& bank : m_internal->get_ram())
-	{
-		if(offset >= data.size())
-		{
-			break;
-		}
-		const size_t count = std::min(bank.size(), data.size() - offset);
-		std::copy_n(data.begin() + static_cast<std::ptrdiff_t>(offset),
-			static_cast<std::ptrdiff_t>(count), bank.data().begin());
-		offset += count;
-	}
+	m_internal->load_battery_data(data);
 	return true;
+}
+
+std::vector<u8> Cart::read_battery_data()
+{
+	std::vector<u8> data;
+	if(m_internal != nullptr)
+	{
+		m_internal->append_battery_data(data);
+	}
+	return data;
+}
+
+void Cart::set_rtc_clock(std::function<int64_t()> now)
+{
+	m_rtc_now = std::move(now);
+	if(m_internal != nullptr)
+	{
+		m_internal->set_rtc_clock(m_rtc_now);
+	}
 }
 
 bool Cart::save_battery_ram(const std::string& path)
@@ -178,7 +217,7 @@ bool Cart::save_battery_ram(const std::string& path)
 		return false;
 	}
 
-	const std::vector<u8> data = read_battery_ram();
+	const std::vector<u8> data = read_battery_data();
 	if(data.empty())
 	{
 		return false;

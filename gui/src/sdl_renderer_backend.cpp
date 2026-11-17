@@ -1,5 +1,30 @@
 #include <SDL2/SDL.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include "sdl_renderer_backend.h"
+
+namespace
+{
+int find_render_driver(const char* name)
+{
+	if(name == nullptr || name[0] == '\0' || std::strcmp(name, "auto") == 0)
+	{
+		return -1;
+	}
+
+	const int count = SDL_GetNumRenderDrivers();
+	for(int i = 0; i < count; i++)
+	{
+		SDL_RendererInfo info{};
+		if(SDL_GetRenderDriverInfo(i, &info) == 0 && std::strcmp(info.name, name) == 0)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+}
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 
@@ -9,8 +34,46 @@ SDLRendererBackend::SDLRendererBackend()
 void SDLRendererBackend::init()
 {
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER);
+	SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
 	m_window = SDL_CreateWindow("QtreGB", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
-	m_renderer = SDL_CreateRenderer(m_window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+
+	const char* requested = std::getenv("QTR_RENDERER");
+	const int driver_index = find_render_driver(requested);
+	Uint32 renderer_flags = SDL_RENDERER_PRESENTVSYNC;
+	if(requested == nullptr || std::strcmp(requested, "software") != 0)
+	{
+		renderer_flags |= SDL_RENDERER_ACCELERATED;
+	}
+
+	m_renderer = SDL_CreateRenderer(m_window, driver_index, renderer_flags);
+	if(m_renderer == nullptr && driver_index >= 0)
+	{
+		std::fprintf(stderr, "Could not create renderer '%s'; falling back to auto.\n", requested);
+		m_renderer = SDL_CreateRenderer(m_window, -1,
+			SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+	}
+
+	if(m_renderer != nullptr)
+	{
+		// The creation flag is only a request; enforce it explicitly and then
+		// query the renderer, since some drivers silently ignore it.
+		const int vsync_result = SDL_RenderSetVSync(m_renderer, 1);
+		SDL_RendererInfo renderer_info{};
+		if(SDL_GetRendererInfo(m_renderer, &renderer_info) == 0)
+		{
+			m_vsync = (renderer_info.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
+			if(std::getenv("QTR_RENDER_INFO") != nullptr)
+			{
+				const char* video_driver = SDL_GetCurrentVideoDriver();
+				std::fprintf(stderr,
+					"Video driver: %s\nRenderer: %s\nVSync: %s (request %s)\n",
+					video_driver ? video_driver : "unknown",
+					renderer_info.name,
+					m_vsync ? "enabled" : "UNAVAILABLE",
+					vsync_result == 0 ? "ok" : "failed");
+			}
+		}
+	}
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
@@ -40,7 +103,33 @@ void SDLRendererBackend::render_draw_data()
 
 void SDLRendererBackend::handle_event(const void *event)
 {
-	ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event));
+	const SDL_Event* sdl_event = static_cast<const SDL_Event*>(event);
+	if(sdl_event->type == SDL_KEYDOWN && sdl_event->key.repeat == 0 &&
+		sdl_event->key.keysym.sym == SDLK_f)
+	{
+		toggle_fullscreen();
+	}
+	ImGui_ImplSDL2_ProcessEvent(sdl_event);
+}
+
+void SDLRendererBackend::toggle_fullscreen()
+{
+	if(m_window == nullptr)
+	{
+		return;
+	}
+
+	const Uint32 flags = SDL_GetWindowFlags(m_window);
+	if((flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0)
+	{
+		SDL_SetWindowFullscreen(m_window, 0);
+		return;
+	}
+
+	const Uint32 mode = std::getenv("QTR_FULLSCREEN_EXCLUSIVE") != nullptr
+		? SDL_WINDOW_FULLSCREEN
+		: SDL_WINDOW_FULLSCREEN_DESKTOP;
+	SDL_SetWindowFullscreen(m_window, mode);
 }
 
 void SDLRendererBackend::shutdown()
@@ -61,6 +150,7 @@ void *SDLRendererBackend::createTexture(int width, int height)
 	{
 		return nullptr;
 	}
+	SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
 	void* id = reinterpret_cast<void*>(texture);
 	m_textures[id] = texture;
 	return id;
@@ -68,20 +158,18 @@ void *SDLRendererBackend::createTexture(int width, int height)
 
 void SDLRendererBackend::updateTexture(void *textureId, const uint32_t *pixels, int width, int height)
 {
+	(void)height;
 	auto it = m_textures.find(textureId);
 	if(it == m_textures.end())
 	{
 		return;
 	}
 
-	SDL_Texture* texture = it->second;
-	void* dst;
-	int pitch;
-	if(SDL_LockTexture(texture, NULL, &dst, &pitch) == 0)
-	{
-		memcpy(dst, pixels, width * height * sizeof(uint32_t));
-		SDL_UnlockTexture(texture);
-	}
+	// SDL_UpdateTexture handles the destination pitch and driver-specific
+	// synchronization internally. The manual LockTexture/memcpy path can
+	// leave a visible seam with some SDL2 renderer drivers.
+	SDL_UpdateTexture(it->second, nullptr, pixels,
+		width * static_cast<int>(sizeof(uint32_t)));
 }
 
 void SDLRendererBackend::destroyTexture(void *textureId)

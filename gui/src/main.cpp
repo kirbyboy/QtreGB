@@ -4,6 +4,8 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <chrono>
+#include <cmath>
 #include <unistd.h>
 
 #include "QtreGB.h"
@@ -26,6 +28,34 @@ constexpr u32 GB_PALETTE[4] = {
     0x555555FF, // Dark gray -> color 2
     0x000000FF  // Black -> color 3
 };
+
+constexpr int GB_FRAME_TICKS = 70224;
+constexpr double GB_CLOCK_HZ = 4194304.0;
+constexpr double GB_FRAME_SECONDS = GB_FRAME_TICKS / GB_CLOCK_HZ;
+constexpr double MAX_CATCHUP_SECONDS = 0.25;
+constexpr int MAX_FRAMES_PER_LOOP = 4;
+
+// Runs the emulator until the PPU completes a frame. The PPU signals the
+// frame callback at the start of line 0, when the video buffer contains a
+// complete frame. Stopping there is essential: reading the buffer after a
+// fixed number of T-cycles can catch the PPU mid-frame, mixing rows from the
+// new and previous frames (a fixed horizontal seam that only shows while
+// scrolling).
+static bool run_emulated_frame(EmulatorInstance& emulator)
+{
+    for(int i = 0; i < GB_FRAME_TICKS; i++)
+    {
+        emulator.tick();
+        if(emulator.get_frame_ready())
+        {
+            return true;
+        }
+    }
+
+    // The LCD may be off, in which case the PPU does not produce frames.
+    // Still consume one frame worth of CPU cycles so emulation keeps pace.
+    return false;
+}
 
 /*
 int main(int argc, char* argv[])
@@ -86,11 +116,14 @@ int main()
 	imguiManager.init();
 
 	EmulatorFrontend frontend(&backend);
+	EmulatorInstance* emulator = frontend.get_emulator();
 
 	bool running = true;
 	SDL_Event event;
 
-	u32 FPS = 1000 / 60;
+	using Clock = std::chrono::steady_clock;
+	Clock::time_point previous = Clock::now();
+	double accumulator = 0.0;
 
 	while (running)
 	{
@@ -108,31 +141,72 @@ int main()
 			}
 		}
 
-		bool frame_ready = false;
-		auto start = SDL_GetTicks();   // or std::chrono
-		while (!frame_ready)
+		// Emulation runs on its own clock (59.7275 Hz), not on the monitor's
+		// refresh rate. Rendering still happens once per loop and vsync makes
+		// it wait for the display, so the emulation speed stays correct on
+		// 50 Hz, 60 Hz, 144 Hz, etc. monitors.
+		const Clock::time_point now = Clock::now();
+		double delta = std::chrono::duration<double>(now - previous).count();
+		previous = now;
+		if(delta < 0.0)
 		{
-			frontend.get_emulator()->tick();
-			frame_ready = frontend.get_emulator()->get_frame_ready();
+			delta = 0.0;
+		}
+		if(delta > MAX_CATCHUP_SECONDS)
+		{
+			delta = MAX_CATCHUP_SECONDS;
+		}
+		accumulator += delta;
 
-			// exit condition: do not block the GUI
-			auto now = SDL_GetTicks();
-			if (now - start > FPS)  // ~16ms: time to refresh the GUI
-				break;
+		bool new_frame = false;
+		if(emulator->is_ready())
+		{
+			int frames = 0;
+			while(accumulator >= GB_FRAME_SECONDS && frames < MAX_FRAMES_PER_LOOP)
+			{
+				if(run_emulated_frame(*emulator))
+				{
+					new_frame = true;
+				}
+				accumulator -= GB_FRAME_SECONDS;
+				frames++;
+			}
+
+			// Do not let a long stall build an ever-growing backlog.
+			if(frames == MAX_FRAMES_PER_LOOP && accumulator >= GB_FRAME_SECONDS)
+			{
+				accumulator = std::fmod(accumulator, GB_FRAME_SECONDS);
+			}
+
+			emulator->drain_audio();
+		}
+		else
+		{
+			accumulator = 0.0;
 		}
 
-		frontend.get_emulator()->drain_audio();
-
-		// --- 2. Update framebuffer if there is one ---
-		if (frame_ready)
+		if(new_frame)
 		{
-			frontend.get_emulator()->update_frame(GB_PALETTE);
+			emulator->update_frame(GB_PALETTE);
 		}
 
 		backend.new_frame();
 		frontend.handle_input();
 		frontend.draw_main_window();
 		backend.render_draw_data();
+
+		// Vsync normally blocks in render_draw_data(). If the backend could
+		// not enable it, avoid a busy loop with a ~60 Hz fallback. The second
+		// guard covers minimized windows, where some drivers stop blocking on
+		// present.
+		if(!backend.vsync_enabled())
+		{
+			SDL_Delay(16);
+		}
+		else if(delta < 0.001)
+		{
+			SDL_Delay(1);
+		}
 	}
 
 	backend.shutdown();

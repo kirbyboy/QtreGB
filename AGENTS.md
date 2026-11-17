@@ -7,7 +7,7 @@ both are the only implementations — there are no selection flags.
 
 ## Build & test
 - `make -j$(nproc)` → `build/QtreGB-GUI` (C++17, `-O0 -g`, `-Wall -Wextra -Wpedantic`).
-- `make run_tests` → doctest suite in `tests/` (143 cases, 683 assertions).
+- `make run_tests` → doctest suite in `tests/` (156 cases, 787 assertions).
 - `make run_blargg` (15) · `make run_mts` (34).
 - PPU acceptance ROMs are **not** wired into `mts/Makefile`; run them manually:
   `./build/mts_runner vendor/mts/*/acceptance/ppu/*.gb` → 12/12.
@@ -50,9 +50,21 @@ both are the only implementations — there are no selection flags.
   covers registers, channel state, DIV phase, resampler and HPF state (the PCM
   ring is deliberately excluded). A full machine savestate still needs the
   PPU/LCD/cart/DMA parts (see `documentation/Game Boy/apu-plan.md`).
-- `core/inc/cart.h` + MBC1/no-MBC cartridges: battery-backed RAM is saved to
-  `<rom>.sav` next to the ROM (all RAM banks, raw concatenation). The GUI saves
-  on ROM switch/reset/close and loads it when a battery cartridge starts.
+- `core/inc/cart.h` + MBC1/no-MBC/MBC2/MBC3 cartridges: battery-backed RAM is
+  saved to `<rom>.sav` next to the ROM. MBC2 uses 512 bytes (one nibble per
+  address) and can import 256-byte packed mGBA saves; MBC1/no-MBC save all RAM
+  banks raw. MBC3 supports 7-bit ROM banking, up to 32 KB RAM and a host-time
+  RTC (latch, halt, day carry); its save appends the VBA64 48-byte RTC block
+  after RAM. MBC30 is detected by an MBC3 RAM size of `$05` (64 KB) and uses
+  8-bit ROM banks and 8 RAM banks. `mbc3-tester`, `rtc3test`
+  (basic/range/sub-second) and Mealybug `mbc3_rtc` pass. MBC1 supports 1 MB+
+  secondary banking (bits 5-6) and MBC1M detection (secondary bits 4-5). The
+  GUI saves on ROM switch/reset/close and loads it when a battery cartridge
+  starts.
+- `gui/src/main.cpp`: time-based frame pacer. Emulation runs at the Game Boy
+  rate (70224 T-cycles per frame, 59.7275 Hz), independent of the monitor;
+  rendering is presented once per loop with SDL vsync so the image is not torn
+  and high-refresh monitors only repeat frames.
 - `core/inc/QtreGB.h` + `core/src/QtreGB.cpp`: machine wiring (`Cpu = CpuMicro`,
   `PPU`).
 - The DocBoy PPU oracle was removed after reaching parity; it remains in Git
