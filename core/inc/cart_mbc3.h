@@ -19,12 +19,17 @@ class CartMBC3 : public InternalCart
 		~CartMBC3();
 
 		bool load_rom(std::vector<u8>& rom) override;
+		const std::vector<u8>& rom() const override { return m_rom; }
 
 		std::vector<Memory>& get_ram() override;
 		void set_ram_banks(u8 banks) override;
 		void append_battery_data(std::vector<u8>& data) override;
 		void load_battery_data(const std::vector<u8>& data) override;
 		void set_rtc_clock(std::function<int64_t()> now) override;
+		CartMapper mapper() const override { return CartMapper::Mbc3; }
+
+		void save_state(StateWriter& writer) const override;
+		bool load_state(StateReader& reader) override;
 
 		u8 read(u16 address) override;
 		void write(u16 address, u8 value) override;

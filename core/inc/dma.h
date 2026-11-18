@@ -8,6 +8,9 @@
 namespace qtreGB
 {
 
+class StateReader;
+class StateWriter;
+
 class DMA
 {
 	public:
@@ -17,6 +20,9 @@ class DMA
 		void connect(IBus* bus, PPU* ppu);
 		u8 get_value();
 		void reset();
+
+		void save_state(StateWriter& writer) const;
+		bool load_state(StateReader& reader);
 
 
 	private:

@@ -4,7 +4,6 @@
 #include <sstream>
 #include <string>
 
-#include <cstdlib>
 #include <cstdio>
 #include <utility>
 
@@ -13,9 +12,14 @@
 using namespace qtreGB;
 using namespace std;
 
-#if 1
-	static string serial;
-#endif
+namespace
+{
+
+constexpr u16 CLOCK_PHASE = 0x0001;
+constexpr u16 MEMORY_WRAM = 0x0001;
+constexpr u16 MEMORY_HRAM = 0x0002;
+
+} // namespace
 
 //static int contador = 0;
 
@@ -26,6 +30,7 @@ QtreGB::QtreGB() :
 	m_wram(Memory(0x2000)),
 	m_hram(Memory(0x80)),
 	m_io(IO()),
+	m_serial(&m_io),
 	m_timer(Timer()),
 	m_apu(),
 	m_lcd(LCD()),
@@ -53,6 +58,7 @@ QtreGB::QtreGB() :
 	m_ppu.set_frame_callback([this](bool value){ set_frame_ready(value);});
 
 	m_timer.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
+	m_serial.set_interrupt_callback([this](InterruptType bit){ m_interrupt_controller.request_interrupt(bit);});
 	reset_machine();
 }
 
@@ -92,7 +98,9 @@ void QtreGB::tick_t3() { tick_once(); }
 
 void QtreGB::tick_once()
 {
-	if(std::getenv("QTR_IRQDBG"))
+#ifdef QTR_ENABLE_IRQDBG
+	// Development-only CPUEVT trace. Enable by rebuilding with:
+	//   make clean && make QTR_IRQDBG=1
 	{
 		static int n61 = 0;
 		static int n26 = 0;
@@ -108,10 +116,11 @@ void QtreGB::tick_once()
 		{
 			std::fprintf(stderr, "CPUEVT pc=%04X dot=%u ly=%u if=%02X ie=%02X\n",
 				static_cast<unsigned>(pc), static_cast<unsigned>(m_ppu.debug_dots()),
-				static_cast<unsigned>(m_lcd.m_ly),
+				static_cast<unsigned>(m_ppu.debug_ly()),
 				static_cast<unsigned>(m_cpu.read_IF()), static_cast<unsigned>(m_cpu.read_IE()));
 		}
 	}
+#endif
 	if(m_errors.has_error())
 	{
 		return;
@@ -147,18 +156,6 @@ void QtreGB::tick_once()
 
 			cout << buffer.str();
 		#endif
-		#if 1
-			if(m_io.io_read(0xFF02) == 0x81)
-			{
-				char c = static_cast<char>(m_io.io_read(0xFF01));
-				serial.push_back(c);
-				m_io.io_write(0xFF02, 0);
-				if(getenv("SERIAL_TRACE"))
-				{
-					cout << "Result: " << serial << endl;
-				}
-			}
-		#endif
 	}
 	// The CPU must see the current wave-RAM access window when it runs.
 	m_apu.prepare_tick();
@@ -171,6 +168,7 @@ void QtreGB::tick_once()
 	}
 	m_ppu.ppu_tick();
 	m_apu.tick(m_timer.read_div16());
+	m_serial.tick();
 
 	if(m_cpu.is_end_m_cycle())
 	{
@@ -207,7 +205,6 @@ void QtreGB::tick_once()
 bool QtreGB::load_cart(vector<u8> cart)
 {
 	m_errors.clear();
-	serial.clear();
 	if(m_cart.load_cart(cart) != 0)
 	{
 		return false;
@@ -236,7 +233,6 @@ void QtreGB::reset()
 void QtreGB::reset_machine()
 {
 	m_errors.clear();
-	serial.clear();
 
 	if(m_has_boot_rom)
 	{
@@ -244,12 +240,206 @@ void QtreGB::reset_machine()
 	}
 	m_bus.set_boot_rom_enabled(m_has_boot_rom);
 	m_cpu.reset(m_has_boot_rom);
+	m_serial.reset();
 	m_timer.timer_init();
 	m_apu.reset();
 	m_ppu.ppu_init(m_has_boot_rom);
 	m_dma.reset();
 	m_clock.reset();
 	m_frame_ready = false;
+}
+
+bool QtreGB::save_state(std::vector<u8>& out) const
+{
+	const std::vector<u8>& rom = m_cart.rom();
+	StateWriter writer(static_cast<u32>(rom.size()), state_hash_rom(rom));
+	if(!writer.ok())
+	{
+		return false;
+	}
+
+	writer.begin_chunk(StateChunk::Clock);
+	writer.write_u8(CLOCK_PHASE, static_cast<u8>(m_clock.get()));
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Cpu);
+	m_cpu.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Timer);
+	m_timer.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Apu);
+	m_apu.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Memory);
+	writer.write_bytes(MEMORY_WRAM, m_wram.data());
+	writer.write_bytes(MEMORY_HRAM, m_hram.data());
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Bus);
+	m_bus.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Io);
+	m_io.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Serial);
+	m_serial.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Dma);
+	m_dma.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Gamepad);
+	m_gamepad.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Cart);
+	m_cart.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Ppu);
+	m_ppu.save_state(writer);
+	writer.end_chunk();
+
+	writer.begin_chunk(StateChunk::Lcd);
+	m_lcd.save_state(writer);
+	writer.end_chunk();
+
+	writer.finish();
+	if(!writer.ok())
+	{
+		return false;
+	}
+
+	out = writer.take();
+	return true;
+}
+
+StateError QtreGB::load_state(const std::vector<u8>& in)
+{
+	StateReader reader(in);
+	if(!reader.ok())
+	{
+		return reader.error();
+	}
+
+	const std::vector<u8>& rom = m_cart.rom();
+	if(!reader.rom_matches(static_cast<u32>(rom.size()), state_hash_rom(rom)))
+	{
+		return StateError::WrongRom;
+	}
+
+	// Transactional load: keep the current blob and restore it if any
+	// component rejects the incoming state.
+	std::vector<u8> backup;
+	if(!save_state(backup))
+	{
+		return StateError::WriterMisuse;
+	}
+
+	const auto apply = [](StateReader& state, QtreGB& machine)
+	{
+		if(!state.find_chunk(StateChunk::Clock))
+		{
+			return false;
+		}
+		u8 clock_phase = 0;
+		if(!state.read_u8(CLOCK_PHASE, clock_phase) || clock_phase > 3)
+		{
+			if(clock_phase > 3)
+			{
+				state.mark_error(StateError::BadValue);
+			}
+			return false;
+		}
+		if(!state.end_chunk())
+		{
+			return false;
+		}
+		machine.m_clock.set_value(clock_phase);
+
+		return state.find_chunk(StateChunk::Cpu) &&
+		       machine.m_cpu.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Timer) &&
+		       machine.m_timer.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Apu) &&
+		       machine.m_apu.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Memory) &&
+		       [&state, &machine]()
+		       {
+			       std::vector<u8> wram;
+			       std::vector<u8> hram;
+			       if(!state.read_bytes(MEMORY_WRAM, wram) ||
+			          !state.read_bytes(MEMORY_HRAM, hram))
+			       {
+				       return false;
+			       }
+			       if(wram.size() != machine.m_wram.size() ||
+			          hram.size() != machine.m_hram.size())
+			       {
+				       state.mark_error(StateError::BadLength);
+				       return false;
+			       }
+			       if(!state.end_chunk())
+			       {
+				       return false;
+			       }
+			       machine.m_wram.data() = std::move(wram);
+			       machine.m_hram.data() = std::move(hram);
+			       return true;
+		       }() &&
+		       state.find_chunk(StateChunk::Bus) &&
+		       machine.m_bus.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Io) &&
+		       machine.m_io.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Serial) &&
+		       machine.m_serial.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Dma) &&
+		       machine.m_dma.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Gamepad) &&
+		       machine.m_gamepad.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Cart) &&
+		       machine.m_cart.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Ppu) &&
+		       machine.m_ppu.load_state(state) &&
+		       state.end_chunk() &&
+		       state.find_chunk(StateChunk::Lcd) &&
+		       machine.m_lcd.load_state(state) &&
+		       state.end_chunk() &&
+		       state.finish();
+	};
+
+	if(!apply(reader, *this))
+	{
+		const StateError error = reader.error() == StateError::Ok ?
+			StateError::BadValue : reader.error();
+
+		StateReader restore(backup);
+		if(!apply(restore, *this))
+		{
+			// The backup was produced by this build, so this can only fail if
+			// the machine was already in an inconsistent state. Report the
+			// original load error.
+		}
+		return error;
+	}
+
+	return StateError::Ok;
 }
 
 bool QtreGB::get_frame_ready()

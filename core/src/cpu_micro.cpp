@@ -1,10 +1,63 @@
 #include "cpu_micro.h"
+#include "state_stream.h"
 
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 
 using namespace qtreGB;
+
+namespace
+{
+
+// Component-local field tags. See documentation/Game Boy/savestate-core-format.md.
+constexpr u16 CPU_A = 0x0001;
+constexpr u16 CPU_F = 0x0002;
+constexpr u16 CPU_B = 0x0003;
+constexpr u16 CPU_C = 0x0004;
+constexpr u16 CPU_D = 0x0005;
+constexpr u16 CPU_E = 0x0006;
+constexpr u16 CPU_H = 0x0007;
+constexpr u16 CPU_L = 0x0008;
+constexpr u16 CPU_PC = 0x0009;
+constexpr u16 CPU_SP = 0x000A;
+constexpr u16 CPU_IME = 0x000B;
+constexpr u16 CPU_IE = 0x000C;
+constexpr u16 CPU_IF = 0x000D;
+constexpr u16 CPU_HALTED = 0x000E;
+constexpr u16 CPU_INTERRUPT_STATE = 0x000F;
+constexpr u16 CPU_INTERRUPT_REMAINING = 0x0010;
+constexpr u16 CPU_PHASE = 0x0011;
+constexpr u16 CPU_FETCHING = 0x0012;
+constexpr u16 CPU_FETCHING_CB = 0x0013;
+constexpr u16 CPU_OPCODE = 0x0014;
+constexpr u16 CPU_CB_OPCODE = 0x0015;
+constexpr u16 CPU_IO_DATA = 0x0016;
+constexpr u16 CPU_END_OPCODE = 0x0017;
+constexpr u16 CPU_UNIMPLEMENTED = 0x0018;
+constexpr u16 CPU_READ_PENDING = 0x0019;
+constexpr u16 CPU_READ_ADDR = 0x001A;
+constexpr u16 CPU_WRITE_PENDING = 0x001B;
+constexpr u16 CPU_WRITE_ADDR = 0x001C;
+constexpr u16 CPU_WRITE_VALUE = 0x001D;
+constexpr u16 CPU_ADDR_LO = 0x001E;
+constexpr u16 CPU_ADDR_HI = 0x001F;
+constexpr u16 CPU_PUSH_VALUE = 0x0020;
+constexpr u16 CPU_POP_LOW = 0x0021;
+constexpr u16 CPU_MICROOP_INDEX = 0x0022;
+constexpr u16 CPU_INSTRUCTION_KIND = 0x0023;
+
+// m_instruction points into one of three static tables. The pointer itself is
+// not stable across processes, so the kind and the table index are stored.
+enum InstructionKind : u8
+{
+	IK_NONE = 0,
+	IK_TABLE = 1,
+	IK_CB_TABLE = 2,
+	IK_ISR = 3,
+};
+
+} // namespace
 
 CpuMicro::CpuMicro(IBus* bus) :
 m_bus(bus)
@@ -52,67 +105,238 @@ void CpuMicro::reset()
 	m_microop_index = 0;
 }
 
-void CpuMicro::State::serialize(TaggedSerializer& s)
+void CpuMicro::save_state(StateWriter& writer) const
 {
-	s.process("a", a);
-	s.process("f", f);
-	s.process("b", b);
-	s.process("c", c);
-	s.process("d", d);
-	s.process("e", e);
-	s.process("h", h);
-	s.process("l", l);
-	s.process("pc", pc);
-	s.process("sp", sp);
+	writer.write_u8(CPU_A, m_a);
+	writer.write_u8(CPU_F, m_f);
+	writer.write_u8(CPU_B, m_b);
+	writer.write_u8(CPU_C, m_c);
+	writer.write_u8(CPU_D, m_d);
+	writer.write_u8(CPU_E, m_e);
+	writer.write_u8(CPU_H, m_h);
+	writer.write_u8(CPU_L, m_l);
+	writer.write_u16(CPU_PC, m_pc);
+	writer.write_u16(CPU_SP, m_sp);
+
+	writer.write_enum(CPU_IME, m_ime);
+	writer.write_u8(CPU_IE, m_ie);
+	writer.write_u8(CPU_IF, m_if);
+	writer.write_bool(CPU_HALTED, m_is_halted);
+	writer.write_enum(CPU_INTERRUPT_STATE, m_interrupt_state);
+	writer.write_u8(CPU_INTERRUPT_REMAINING, m_interrupt_remaining);
+	writer.write_u8(CPU_PHASE, m_phase);
+	writer.write_bool(CPU_FETCHING, m_fetching);
+	writer.write_bool(CPU_FETCHING_CB, m_fetching_cb);
+	writer.write_u8(CPU_OPCODE, m_opcode);
+	writer.write_u8(CPU_CB_OPCODE, m_cb_opcode);
+	writer.write_u8(CPU_IO_DATA, m_io_data);
+	writer.write_bool(CPU_END_OPCODE, m_end_opcode);
+	writer.write_bool(CPU_UNIMPLEMENTED, m_unimplemented);
+	writer.write_bool(CPU_READ_PENDING, m_read_pending);
+	writer.write_u16(CPU_READ_ADDR, m_read_addr);
+	writer.write_bool(CPU_WRITE_PENDING, m_write_pending);
+	writer.write_u16(CPU_WRITE_ADDR, m_write_addr);
+	writer.write_u8(CPU_WRITE_VALUE, m_write_value);
+	writer.write_u8(CPU_ADDR_LO, m_addr_lo);
+	writer.write_u8(CPU_ADDR_HI, m_addr_hi);
+	writer.write_u16(CPU_PUSH_VALUE, m_push_value);
+	writer.write_u8(CPU_POP_LOW, m_pop_low);
+	writer.write_u8(CPU_MICROOP_INDEX, m_microop_index);
+
+	u8 kind = IK_NONE;
+	if(m_instruction == isr_table())
+	{
+		kind = IK_ISR;
+	}
+	else if(m_instruction == &cb_table()[m_cb_opcode])
+	{
+		kind = IK_CB_TABLE;
+	}
+	else if(m_instruction == &table()[m_opcode])
+	{
+		kind = IK_TABLE;
+	}
+	writer.write_u8(CPU_INSTRUCTION_KIND, kind);
 }
 
-void CpuMicro::serialize(TaggedSerializer& s)
+bool CpuMicro::load_state(StateReader& reader)
 {
-	s.process("a", m_a);
-	s.process("f", m_f);
-	s.process("b", m_b);
-	s.process("c", m_c);
-	s.process("d", m_d);
-	s.process("e", m_e);
-	s.process("h", m_h);
-	s.process("l", m_l);
-	s.process("pc", m_pc);
-	s.process("sp", m_sp);
+	u8 a = 0, f = 0, b = 0, c = 0, d = 0, e = 0, h = 0, l = 0;
+	u16 pc = 0, sp = 0;
+	u8 ime = 0;
+	u8 ie = 0, if_ = 0;
+	bool halted = false;
+	u8 interrupt_state = 0;
+	u8 interrupt_remaining = 0;
+	u8 phase = 0;
+	bool fetching = false;
+	bool fetching_cb = false;
+	u8 opcode = 0;
+	u8 cb_opcode = 0;
+	u8 io_data = 0;
+	bool end_opcode = false;
+	bool unimplemented = false;
+	bool read_pending = false;
+	u16 read_addr = 0;
+	bool write_pending = false;
+	u16 write_addr = 0;
+	u8 write_value = 0;
+	u8 addr_lo = 0, addr_hi = 0;
+	u16 push_value = 0;
+	u8 pop_low = 0;
+	u8 microop_index = 0;
+	u8 instruction_kind = 0;
 
-	u8 ime = static_cast<u8>(m_ime);
-	s.process("ime", ime);
-	m_ime = static_cast<ImeState>(ime & 0x03);
+	if(!reader.read_u8(CPU_A, a) ||
+	   !reader.read_u8(CPU_F, f) ||
+	   !reader.read_u8(CPU_B, b) ||
+	   !reader.read_u8(CPU_C, c) ||
+	   !reader.read_u8(CPU_D, d) ||
+	   !reader.read_u8(CPU_E, e) ||
+	   !reader.read_u8(CPU_H, h) ||
+	   !reader.read_u8(CPU_L, l) ||
+	   !reader.read_u16(CPU_PC, pc) ||
+	   !reader.read_u16(CPU_SP, sp) ||
+	   !reader.read_u8(CPU_IME, ime) ||
+	   !reader.read_u8(CPU_IE, ie) ||
+	   !reader.read_u8(CPU_IF, if_) ||
+	   !reader.read_bool(CPU_HALTED, halted) ||
+	   !reader.read_u8(CPU_INTERRUPT_STATE, interrupt_state) ||
+	   !reader.read_u8(CPU_INTERRUPT_REMAINING, interrupt_remaining) ||
+	   !reader.read_u8(CPU_PHASE, phase) ||
+	   !reader.read_bool(CPU_FETCHING, fetching) ||
+	   !reader.read_bool(CPU_FETCHING_CB, fetching_cb) ||
+	   !reader.read_u8(CPU_OPCODE, opcode) ||
+	   !reader.read_u8(CPU_CB_OPCODE, cb_opcode) ||
+	   !reader.read_u8(CPU_IO_DATA, io_data) ||
+	   !reader.read_bool(CPU_END_OPCODE, end_opcode) ||
+	   !reader.read_bool(CPU_UNIMPLEMENTED, unimplemented) ||
+	   !reader.read_bool(CPU_READ_PENDING, read_pending) ||
+	   !reader.read_u16(CPU_READ_ADDR, read_addr) ||
+	   !reader.read_bool(CPU_WRITE_PENDING, write_pending) ||
+	   !reader.read_u16(CPU_WRITE_ADDR, write_addr) ||
+	   !reader.read_u8(CPU_WRITE_VALUE, write_value) ||
+	   !reader.read_u8(CPU_ADDR_LO, addr_lo) ||
+	   !reader.read_u8(CPU_ADDR_HI, addr_hi) ||
+	   !reader.read_u16(CPU_PUSH_VALUE, push_value) ||
+	   !reader.read_u8(CPU_POP_LOW, pop_low) ||
+	   !reader.read_u8(CPU_MICROOP_INDEX, microop_index) ||
+	   !reader.read_u8(CPU_INSTRUCTION_KIND, instruction_kind))
+	{
+		return false;
+	}
 
-	s.process("if", m_if);
-	s.process("ie", m_ie);
-	s.process("is_halted", m_is_halted);
+	if(ime > 3 || phase > 3 || interrupt_state > 2 || instruction_kind > 3 ||
+	   (ie & 0xE0) != 0 || (if_ & 0xE0) != 0)
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
 
-	u8 interrupt_state = static_cast<u8>(m_interrupt_state);
-	s.process("interrupt_state", interrupt_state);
-	m_interrupt_state = static_cast<InterruptState>(interrupt_state & 0x03);
+	const Instruction* instruction = nullptr;
+	switch(instruction_kind)
+	{
+		case IK_NONE:
+			break;
+		case IK_TABLE:
+			if(table()[opcode].count == 0)
+			{
+				reader.mark_error(StateError::BadValue);
+				return false;
+			}
+			if(microop_index > table()[opcode].count)
+			{
+				reader.mark_error(StateError::BadValue);
+				return false;
+			}
+			// The only valid state with index == count keeps the CB prefix
+			// instruction alive while the second opcode byte is fetched.
+			if(microop_index == table()[opcode].count &&
+			   !(fetching_cb && opcode == 0xCB))
+			{
+				reader.mark_error(StateError::BadValue);
+				return false;
+			}
+			instruction = &table()[opcode];
+			break;
+		case IK_CB_TABLE:
+			if(opcode != 0xCB || microop_index >= cb_table()[cb_opcode].count)
+			{
+				reader.mark_error(StateError::BadValue);
+				return false;
+			}
+			instruction = &cb_table()[cb_opcode];
+			break;
+		case IK_ISR:
+			if(interrupt_state != static_cast<u8>(InterruptState::Serving) ||
+			   microop_index >= isr_table()->count)
+			{
+				reader.mark_error(StateError::BadValue);
+				return false;
+			}
+			instruction = isr_table();
+			break;
+		default:
+			reader.mark_error(StateError::BadValue);
+			return false;
+	}
 
-	s.process("interrupt_remaining", m_interrupt_remaining);
-	s.process("phase", m_phase);
-	s.process("fetching", m_fetching);
-	s.process("fetching_cb", m_fetching_cb);
-	s.process("opcode", m_opcode);
-	s.process("cb_opcode", m_cb_opcode);
-	s.process("io_data", m_io_data);
-	s.process("end_opcode", m_end_opcode);
-	s.process("unimplemented", m_unimplemented);
-	s.process("read_pending", m_read_pending);
-	s.process("read_addr", m_read_addr);
-	s.process("write_pending", m_write_pending);
-	s.process("write_addr", m_write_addr);
-	s.process("write_value", m_write_value);
-	s.process("addr_lo", m_addr_lo);
-	s.process("addr_hi", m_addr_hi);
-	s.process("push_value", m_push_value);
-	s.process("pop_low", m_pop_low);
-	s.process("microop_index", m_microop_index);
+	if((interrupt_state == static_cast<u8>(InterruptState::Serving)) !=
+	   (instruction_kind == IK_ISR))
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
 
-	// m_instruction points into a static table and is not serialized. The
-	// runners read the state at instruction boundaries, where it is null.
+	// Cross-field invariants of the micro-op pipeline. A fetch in progress
+	// means there is no live instruction; the CB prefix keeps its table entry
+	// alive while the second opcode byte is being fetched; HALT always has a
+	// fetch in flight.
+	if((fetching && instruction_kind != IK_NONE) ||
+	   (halted && !fetching) ||
+	   (fetching_cb && !(instruction_kind == IK_TABLE && opcode == 0xCB &&
+	                     microop_index == table()[opcode].count)))
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+
+	m_a = a;
+	m_f = f;
+	m_b = b;
+	m_c = c;
+	m_d = d;
+	m_e = e;
+	m_h = h;
+	m_l = l;
+	m_pc = pc;
+	m_sp = sp;
+	m_ime = static_cast<ImeState>(ime);
+	m_ie = ie;
+	m_if = if_;
+	m_is_halted = halted;
+	m_interrupt_state = static_cast<InterruptState>(interrupt_state);
+	m_interrupt_remaining = interrupt_remaining;
+	m_phase = phase;
+	m_fetching = fetching;
+	m_fetching_cb = fetching_cb;
+	m_opcode = opcode;
+	m_cb_opcode = cb_opcode;
+	m_io_data = io_data;
+	m_end_opcode = end_opcode;
+	m_unimplemented = unimplemented;
+	m_read_pending = read_pending;
+	m_read_addr = read_addr;
+	m_write_pending = write_pending;
+	m_write_addr = write_addr;
+	m_write_value = write_value;
+	m_addr_lo = addr_lo;
+	m_addr_hi = addr_hi;
+	m_push_value = push_value;
+	m_pop_low = pop_low;
+	m_instruction = instruction;
+	m_microop_index = microop_index;
+	return true;
 }
 
 u8 CpuMicro::read_register(RegType type) const

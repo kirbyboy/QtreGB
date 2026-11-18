@@ -1,5 +1,6 @@
 #include "types.h"
 #include "cart_mbc3.h"
+#include "state_stream.h"
 
 #include <algorithm>
 #include <utility>
@@ -13,6 +14,30 @@ namespace
 constexpr size_t ROM_BANK_SIZE = 0x4000;
 constexpr size_t RTC_SAVE_SIZE32 = 44;
 constexpr size_t RTC_SAVE_SIZE64 = 48;
+
+constexpr u16 CART_RAM_ENABLE = 0x0001;
+constexpr u16 CART_ROM_BANK = 0x0002;
+constexpr u16 CART_SELECTED = 0x0003;
+constexpr u16 CART_LATCH_ARMED = 0x0004;
+constexpr u16 CART_MBC30 = 0x0005;
+constexpr u16 CART_HAS_RTC = 0x0006;
+
+constexpr u16 CART_RTC_SECONDS = 0x0010;
+constexpr u16 CART_RTC_MINUTES = 0x0011;
+constexpr u16 CART_RTC_HOURS = 0x0012;
+constexpr u16 CART_RTC_DAYS = 0x0013;
+constexpr u16 CART_RTC_HALT = 0x0014;
+constexpr u16 CART_RTC_CARRY = 0x0015;
+
+constexpr u16 CART_LATCHED_SECONDS = 0x0020;
+constexpr u16 CART_LATCHED_MINUTES = 0x0021;
+constexpr u16 CART_LATCHED_HOURS = 0x0022;
+constexpr u16 CART_LATCHED_DAYS = 0x0023;
+constexpr u16 CART_LATCHED_HALT = 0x0024;
+constexpr u16 CART_LATCHED_CARRY = 0x0025;
+
+constexpr u16 CART_SUBSECOND = 0x0030;
+constexpr u16 CART_RAM = 0x0040;
 
 u32 read_u32(const std::vector<u8>& data, size_t offset)
 {
@@ -341,6 +366,111 @@ void CartMBC3::write(u16 address, u8 value)
 			write_rtc_register(value);
 		}
 	}
+}
+
+void CartMBC3::save_state(StateWriter& writer) const
+{
+	writer.write_bool(CART_RAM_ENABLE, m_ram_enable);
+	writer.write_u8(CART_ROM_BANK, m_rom_bank);
+	writer.write_u8(CART_SELECTED, m_selected);
+	writer.write_bool(CART_LATCH_ARMED, m_latch_armed);
+	writer.write_bool(CART_MBC30, m_mbc30);
+	writer.write_bool(CART_HAS_RTC, m_has_rtc);
+
+	writer.write_u8(CART_RTC_SECONDS, m_rtc.seconds);
+	writer.write_u8(CART_RTC_MINUTES, m_rtc.minutes);
+	writer.write_u8(CART_RTC_HOURS, m_rtc.hours);
+	writer.write_u16(CART_RTC_DAYS, m_rtc.days);
+	writer.write_bool(CART_RTC_HALT, m_rtc.halt);
+	writer.write_bool(CART_RTC_CARRY, m_rtc.carry);
+
+	writer.write_u8(CART_LATCHED_SECONDS, m_rtc_latched.seconds);
+	writer.write_u8(CART_LATCHED_MINUTES, m_rtc_latched.minutes);
+	writer.write_u8(CART_LATCHED_HOURS, m_rtc_latched.hours);
+	writer.write_u16(CART_LATCHED_DAYS, m_rtc_latched.days);
+	writer.write_bool(CART_LATCHED_HALT, m_rtc_latched.halt);
+	writer.write_bool(CART_LATCHED_CARRY, m_rtc_latched.carry);
+
+	writer.write_u32(CART_SUBSECOND, static_cast<u32>(m_subsecond));
+	writer.write_bytes(CART_RAM, cart_ram_bytes(m_ram));
+}
+
+bool CartMBC3::load_state(StateReader& reader)
+{
+	bool ram_enable = false;
+	bool latch_armed = false;
+	bool mbc30 = false;
+	bool has_rtc = false;
+	u8 rom_bank = 0;
+	u8 selected = 0;
+	RtcValue rtc {};
+	RtcValue latched {};
+	u32 subsecond = 0;
+	std::vector<u8> ram;
+
+	if(!reader.read_bool(CART_RAM_ENABLE, ram_enable) ||
+	   !reader.read_u8(CART_ROM_BANK, rom_bank) ||
+	   !reader.read_u8(CART_SELECTED, selected) ||
+	   !reader.read_bool(CART_LATCH_ARMED, latch_armed) ||
+	   !reader.read_bool(CART_MBC30, mbc30) ||
+	   !reader.read_bool(CART_HAS_RTC, has_rtc) ||
+	   !reader.read_u8(CART_RTC_SECONDS, rtc.seconds) ||
+	   !reader.read_u8(CART_RTC_MINUTES, rtc.minutes) ||
+	   !reader.read_u8(CART_RTC_HOURS, rtc.hours) ||
+	   !reader.read_u16(CART_RTC_DAYS, rtc.days) ||
+	   !reader.read_bool(CART_RTC_HALT, rtc.halt) ||
+	   !reader.read_bool(CART_RTC_CARRY, rtc.carry) ||
+	   !reader.read_u8(CART_LATCHED_SECONDS, latched.seconds) ||
+	   !reader.read_u8(CART_LATCHED_MINUTES, latched.minutes) ||
+	   !reader.read_u8(CART_LATCHED_HOURS, latched.hours) ||
+	   !reader.read_u16(CART_LATCHED_DAYS, latched.days) ||
+	   !reader.read_bool(CART_LATCHED_HALT, latched.halt) ||
+	   !reader.read_bool(CART_LATCHED_CARRY, latched.carry) ||
+	   !reader.read_u32(CART_SUBSECOND, subsecond) ||
+	   !reader.read_bytes(CART_RAM, ram))
+	{
+		return false;
+	}
+
+	const auto valid_rtc = [](const RtcValue& value)
+	{
+		return value.seconds < 64 && value.minutes < 64 &&
+		       value.hours < 32 && value.days < 512;
+	};
+
+	const u8 max_ram_bank = mbc30 ? 0x07 : 0x03;
+	const bool selected_ok = selected == 0xFF ||
+		selected <= max_ram_bank ||
+		(selected >= 0x08 && selected <= 0x0C);
+
+	if(mbc30 != m_mbc30 || has_rtc != m_has_rtc ||
+	   (!mbc30 && rom_bank > 0x7F) || !selected_ok ||
+	   !valid_rtc(rtc) || !valid_rtc(latched) || subsecond > 999999)
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+	if(!cart_ram_load(ram, m_ram))
+	{
+		reader.mark_error(StateError::BadLength);
+		return false;
+	}
+
+	m_ram_enable = ram_enable;
+	m_rom_bank = rom_bank;
+	m_selected = selected;
+	m_latch_armed = latch_armed;
+	m_mbc30 = mbc30;
+	m_has_rtc = has_rtc;
+	m_rtc = rtc;
+	m_rtc_latched = latched;
+	m_subsecond = static_cast<int64_t>(subsecond);
+
+	// RTC savestate policy: the host epoch is not serialized. Counters are
+	// frozen at save time and resume from the load instant, so the time the
+	// user spent between saving and loading is not applied.
+	m_last_time = m_now ? m_now() : 0;
+	return true;
 }
 
 void CartMBC3::append_battery_data(std::vector<u8>& data)

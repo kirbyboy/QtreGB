@@ -6,6 +6,7 @@
 #include <vector>
 #include <chrono>
 #include <cmath>
+#include <thread>
 #include <unistd.h>
 
 #include "QtreGB.h"
@@ -17,17 +18,11 @@
 #include "sdl_renderer_backend.h"
 #include "emulator_frontend.h"
 #include "imgui_manager.h"
+#include "app_config.h"
 
 using namespace qtreGB;
 
 using namespace std;
-
-constexpr u32 GB_PALETTE[4] = {
-    0xFFFFFFFF, // White -> color 0
-    0xAAAAAAFF, // Light gray -> color 1
-    0x555555FF, // Dark gray -> color 2
-    0x000000FF  // Black -> color 3
-};
 
 constexpr int GB_FRAME_TICKS = 70224;
 constexpr double GB_CLOCK_HZ = 4194304.0;
@@ -41,12 +36,18 @@ constexpr int MAX_FRAMES_PER_LOOP = 4;
 // fixed number of T-cycles can catch the PPU mid-frame, mixing rows from the
 // new and previous frames (a fixed horizontal seam that only shows while
 // scrolling).
-static bool run_emulated_frame(EmulatorInstance& emulator)
+static bool run_emulated_frame(EmulatorFrontend& frontend)
 {
+    EmulatorInstance* primary = frontend.get_emulator();
+    if(primary == nullptr)
+    {
+        return false;
+    }
+
     for(int i = 0; i < GB_FRAME_TICKS; i++)
     {
-        emulator.tick();
-        if(emulator.get_frame_ready())
+        frontend.tick();
+        if(primary->get_frame_ready())
         {
             return true;
         }
@@ -109,19 +110,25 @@ int main(int argc, char* argv[])
 
 int main()
 {
+	const AppConfig config = AppConfig::load_default();
+
 	SDLRendererBackend backend;
-	backend.init();
+	backend.init(config.window_width, config.window_height,
+		config.window_maximized);
 
 	ImGuiManager imguiManager;
 	imguiManager.init();
 
-	EmulatorFrontend frontend(&backend);
+	EmulatorFrontend frontend(&backend, config.display, config.audio,
+		config.input);
 	EmulatorInstance* emulator = frontend.get_emulator();
 
 	bool running = true;
 	SDL_Event event;
 
 	using Clock = std::chrono::steady_clock;
+	const Clock::duration frame_duration = std::chrono::duration_cast<Clock::duration>(
+		std::chrono::duration<double>(GB_FRAME_SECONDS));
 	Clock::time_point previous = Clock::now();
 	double accumulator = 0.0;
 
@@ -137,6 +144,7 @@ int main()
 			}
 			else
 			{
+				frontend.handle_sdl_event(&event);
 				backend.handle_event(&event);
 			}
 		}
@@ -164,7 +172,7 @@ int main()
 			int frames = 0;
 			while(accumulator >= GB_FRAME_SECONDS && frames < MAX_FRAMES_PER_LOOP)
 			{
-				if(run_emulated_frame(*emulator))
+				if(run_emulated_frame(frontend))
 				{
 					new_frame = true;
 				}
@@ -178,7 +186,7 @@ int main()
 				accumulator = std::fmod(accumulator, GB_FRAME_SECONDS);
 			}
 
-			emulator->drain_audio();
+			frontend.drain_audio();
 		}
 		else
 		{
@@ -187,28 +195,76 @@ int main()
 
 		if(new_frame)
 		{
-			emulator->update_frame(GB_PALETTE);
+			frontend.update_frame();
 		}
 
 		backend.new_frame();
 		frontend.handle_input();
 		frontend.draw_main_window();
-		backend.render_draw_data();
 
-		// Vsync normally blocks in render_draw_data(). If the backend could
-		// not enable it, avoid a busy loop with a ~60 Hz fallback. The second
-		// guard covers minimized windows, where some drivers stop blocking on
-		// present.
-		if(!backend.vsync_enabled())
+		const Clock::time_point present_start = Clock::now();
+		backend.render_draw_data();
+		const Clock::time_point presented = Clock::now();
+		const Clock::duration present_duration = presented - present_start;
+
+		// If vsync really blocked, let the display drive presentation:
+		// adding our own 59.7275 Hz sleep on top of a 60 Hz vblank creates a
+		// cumulative drift and a missed vblank every few seconds. If the
+		// driver reports vsync but returns immediately, keep the explicit
+		// frame cap to avoid a busy loop.
+		const int refresh_hz = backend.display_refresh_hz();
+		const Clock::duration vsync_interval = refresh_hz > 0
+			? std::chrono::duration_cast<Clock::duration>(
+				std::chrono::duration<double>(1.0 / refresh_hz))
+			: frame_duration;
+		const bool vsync_blocked = backend.vsync_enabled() &&
+			present_duration >= vsync_interval * 3 / 4;
+
+		bool sleep_for_frame = false;
+		switch(frontend.display_settings().present_mode)
 		{
-			SDL_Delay(16);
+			case PresentMode::Auto:
+				sleep_for_frame = !vsync_blocked;
+				break;
+			case PresentMode::Monitor:
+				// Trust the driver: keep presenting at monitor rate. If the
+				// driver lies about vsync, the user can switch back to Auto.
+				sleep_for_frame = !backend.vsync_enabled();
+				break;
+			case PresentMode::GameBoy:
+				sleep_for_frame = true;
+				break;
 		}
-		else if(delta < 0.001)
+		if(sleep_for_frame)
 		{
-			SDL_Delay(1);
+			const Clock::time_point next_present = present_start + frame_duration;
+			if(presented < next_present)
+			{
+				std::this_thread::sleep_for(next_present - presented);
+			}
 		}
 	}
 
+	AppConfig saved = config;
+	saved.display = frontend.display_settings();
+	saved.audio = frontend.audio_settings();
+	saved.input = frontend.input_settings();
+	saved.window_maximized = backend.window_maximized();
+	if(!saved.window_maximized && !backend.window_fullscreen())
+	{
+		// Keep the last restored size when the window was maximized or
+		// fullscreen, instead of saving the monitor dimensions.
+		saved.window_width = backend.window_width();
+		saved.window_height = backend.window_height();
+	}
+	std::string config_error;
+	if(!saved.save_default(config_error))
+	{
+		std::fprintf(stderr, "Could not save configuration: %s\n",
+			config_error.c_str());
+	}
+
+	frontend.shutdown_input();
 	backend.shutdown();
 
 

@@ -1,5 +1,6 @@
 #include "types.h"
 #include "cart_mbc1.h"
+#include "state_stream.h"
 
 #include <algorithm>
 
@@ -13,6 +14,13 @@ constexpr size_t NINTENDO_LOGO_OFFSET = 0x104;
 constexpr size_t NINTENDO_LOGO_SIZE = 0x30;
 constexpr size_t ROM_BANK_SIZE = 0x4000;
 constexpr size_t MBC1M_DETECTION_BANK = 0x10;
+
+constexpr u16 CART_RAM_ENABLE = 0x0001;
+constexpr u16 CART_ROM_BANK = 0x0002;
+constexpr u16 CART_RAM_BANK = 0x0003;
+constexpr u16 CART_BANKING_MODE = 0x0004;
+constexpr u16 CART_MBC1M = 0x0005;
+constexpr u16 CART_RAM = 0x0010;
 }
 
 CartMBC1::CartMBC1()
@@ -200,4 +208,52 @@ void CartMBC1::write(u16 address, u8 value)
 			m_ram[selected_ram_bank()].write(address - 0xA000, value);
 		}
 	}
+}
+
+void CartMBC1::save_state(StateWriter& writer) const
+{
+	writer.write_bool(CART_RAM_ENABLE, m_ram_enable);
+	writer.write_bool(CART_BANKING_MODE, m_banking_mode);
+	writer.write_bool(CART_MBC1M, m_mbc1m);
+	writer.write_u8(CART_ROM_BANK, m_rom_bank);
+	writer.write_u8(CART_RAM_BANK, m_rom_ram_bank);
+	writer.write_bytes(CART_RAM, cart_ram_bytes(m_ram));
+}
+
+bool CartMBC1::load_state(StateReader& reader)
+{
+	bool ram_enable = false;
+	bool banking_mode = false;
+	bool mbc1m = false;
+	u8 rom_bank = 0;
+	u8 ram_bank = 0;
+	std::vector<u8> ram;
+
+	if(!reader.read_bool(CART_RAM_ENABLE, ram_enable) ||
+	   !reader.read_bool(CART_BANKING_MODE, banking_mode) ||
+	   !reader.read_bool(CART_MBC1M, mbc1m) ||
+	   !reader.read_u8(CART_ROM_BANK, rom_bank) ||
+	   !reader.read_u8(CART_RAM_BANK, ram_bank) ||
+	   !reader.read_bytes(CART_RAM, ram))
+	{
+		return false;
+	}
+
+	if(mbc1m != m_mbc1m || rom_bank > 0x1F || ram_bank > 0x03)
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+	if(!cart_ram_load(ram, m_ram))
+	{
+		reader.mark_error(StateError::BadLength);
+		return false;
+	}
+
+	m_ram_enable = ram_enable;
+	m_banking_mode = banking_mode;
+	m_mbc1m = mbc1m;
+	m_rom_bank = rom_bank;
+	m_rom_ram_bank = ram_bank;
+	return true;
 }

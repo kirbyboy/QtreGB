@@ -14,6 +14,9 @@
 namespace qtreGB
 {
 
+class StateReader;
+class StateWriter;
+
 class Cart
 {
 	public:
@@ -25,6 +28,10 @@ class Cart
 
 		u8 read(u16 address);
 		void write(u16 address, u8 value);
+
+		bool has_cartridge() const { return m_internal != nullptr; }
+		// Loaded ROM image. Empty when no cartridge is loaded.
+		const std::vector<u8>& rom() const;
 
 		bool has_battery() const { return m_has_battery; }
 
@@ -41,6 +48,10 @@ class Cart
 		// Battery-backed RAM persistence (.sav next to the ROM).
 		bool save_battery_ram(const std::string& path);
 		bool load_battery_ram(const std::string& path);
+
+		// Savestate: mapper registers, cartridge RAM and MBC3 RTC.
+		void save_state(StateWriter& writer) const;
+		bool load_state(StateReader& reader);
 
 		// Overrides the host clock used by MBC3 RTC (tests). Returns
 		// microseconds since the Unix epoch.

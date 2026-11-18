@@ -8,7 +8,8 @@
 namespace qtreGB
 {
 
-class TaggedSerializer;
+class StateReader;
+class StateWriter;
 
 // DMG APU. Milestone 3: register file, power state and the CH1 pulse
 // generator (timer, duty and fixed volume). The mixer, the ring buffer and the
@@ -62,7 +63,8 @@ class APU
 		u8 pcm12() const;
 		u8 pcm34() const;
 
-		void serialize(TaggedSerializer& s);
+		void save_state(StateWriter& writer) const;
+		bool load_state(StateReader& reader);
 
 	private:
 		// Registers FF10-FF25. NR52 is not stored: m_powered is its bit 7.
@@ -119,7 +121,8 @@ class APU
 			bool sweep_enabled = false;
 			bool sweep_negate_used = false;
 
-			void serialize(TaggedSerializer& s);
+			void save_state(StateWriter& writer) const;
+			bool load_state(StateReader& reader);
 		};
 
 		Pulse m_ch1;
@@ -147,7 +150,8 @@ class APU
 			u32 last_sample_cycle = 0;
 			bool sample_valid = false;
 
-			void serialize(TaggedSerializer& s);
+			void save_state(StateWriter& writer) const;
+			bool load_state(StateReader& reader);
 		};
 
 		Wave m_ch3;
@@ -171,7 +175,8 @@ class APU
 			u8 clock_shift = 0;
 			u8 divisor_code = 0;
 
-			void serialize(TaggedSerializer& s);
+			void save_state(StateWriter& writer) const;
+			bool load_state(StateReader& reader);
 		};
 
 		Noise m_ch4;

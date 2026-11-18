@@ -18,7 +18,7 @@ $(OBJDIR)/gui/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)/gui $(DEPDIR)/gui
 	$(CXX) -c $(CFLAGS) -MMD -MP -MF $(DEPDIR)/gui/$*.d -o $@ $<
 
 $(BUILDDIR)/QtreGB-GUI: $(OBJS) $(BUILDDIR)/libqtrebgcore_dbg.a | $(BUILDDIR)
-	$(CXX) -o $@ $(OBJS) $(BUILDDIR)/libqtrebgcore_dbg.a $(GUI_LIBS)
+	$(CXX) $(LTO_FLAGS) -o $@ $(OBJS) $(BUILDDIR)/libqtrebgcore_dbg.a $(GUI_LIBS)
 
 $(OBJDIR)/gui $(DEPDIR)/gui $(BUILDDIR):
 	mkdir -p $@

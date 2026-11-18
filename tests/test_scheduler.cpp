@@ -22,12 +22,6 @@ TEST_CASE("QtreGB: tick advances one phase and cycle advances four")
 	QtreGB emu;
 	REQUIRE(emu.load_cart(make_nop_rom()));
 
-	// IO has no constructor yet and m_sb/m_sc start uninitialized. Writing
-	// them avoids reading indeterminate values from QtreGB::tick()'s serial
-	// debug block. This is test setup, not a core change.
-	emu.m_io.io_write(0xFF01, 0x00);
-	emu.m_io.io_write(0xFF02, 0x00);
-
 	CHECK(emu.get_phase() == Phase::T0);
 	emu.tick();
 	CHECK(emu.get_phase() == Phase::T1);

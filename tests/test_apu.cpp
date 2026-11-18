@@ -1,11 +1,34 @@
 #include "doctest.h"
 #include "apu.h"
-#include "tagged_serializer.h"
+#include "state_stream.h"
 
 using namespace qtreGB;
 
 namespace
 {
+
+std::vector<u8> save_apu(const APU& apu)
+{
+	StateWriter writer(0, 0);
+	writer.begin_chunk(StateChunk::Apu);
+	apu.save_state(writer);
+	writer.end_chunk();
+	writer.finish();
+	REQUIRE(writer.ok());
+	return writer.take();
+}
+
+bool load_apu(APU& apu, const std::vector<u8>& blob)
+{
+	StateReader reader(blob);
+	if(!reader.ok() || !reader.find_chunk(StateChunk::Apu) ||
+	   !apu.load_state(reader) || !reader.end_chunk())
+	{
+		return false;
+	}
+	return reader.finish();
+}
+
 // Test harness: mimics the Timer's 16-bit divider (increments by 4 at T3).
 struct TestApu
 {
@@ -1168,14 +1191,12 @@ TEST_CASE("APU: savestate round-trip restores registers and wave RAM")
 		apu.write(static_cast<u16>(0xFF30 + i), static_cast<u8>(i * 0x11));
 	}
 
-	TaggedSerializer out(TaggedSerializer::Mode::Write);
-	apu.apu.serialize(out);
+	const std::vector<u8> blob = save_apu(apu.apu);
 
 	apu.reset();
 	CHECK(apu.is_powered() == false);
 
-	TaggedSerializer in(TaggedSerializer::Mode::Read, out.data());
-	apu.apu.serialize(in);
+	REQUIRE(load_apu(apu.apu, blob));
 
 	CHECK(apu.is_powered() == true);
 	CHECK(apu.read(0xFF10) == 0xB7);
@@ -1216,12 +1237,10 @@ TEST_CASE("APU: savestate round-trip restores channel state")
 		outputs[i] = apu.channel_output(static_cast<APU::Channel>(i));
 	}
 
-	TaggedSerializer out(TaggedSerializer::Mode::Write);
-	apu.apu.serialize(out);
+	const std::vector<u8> blob = save_apu(apu.apu);
 
 	apu.reset();
-	TaggedSerializer in(TaggedSerializer::Mode::Read, out.data());
-	apu.apu.serialize(in);
+	REQUIRE(load_apu(apu.apu, blob));
 
 	for(int i = 0; i < 4; ++i)
 	{
@@ -1250,11 +1269,8 @@ TEST_CASE("APU: savestate does not restore the PCM ring buffer")
 	}
 	REQUIRE(apu.available_frames() > 0);
 
-	TaggedSerializer out(TaggedSerializer::Mode::Write);
-	apu.apu.serialize(out);
-
-	TaggedSerializer in(TaggedSerializer::Mode::Read, out.data());
-	apu.apu.serialize(in);
+	const std::vector<u8> blob = save_apu(apu.apu);
+	REQUIRE(load_apu(apu.apu, blob));
 
 	CHECK(apu.available_frames() == 0);
 }
@@ -1274,13 +1290,11 @@ TEST_CASE("APU: savestate keeps sweep, envelope and length timing")
 		a.tick();
 	}
 
-	TaggedSerializer out(TaggedSerializer::Mode::Write);
-	a.apu.serialize(out);
+	const std::vector<u8> blob = save_apu(a.apu);
 
 	TestApu b;
 	power_on(b);
-	TaggedSerializer in(TaggedSerializer::Mode::Read, out.data());
-	b.apu.serialize(in);
+	REQUIRE(load_apu(b.apu, blob));
 	b.div = a.div;
 	b.phase = a.phase;
 

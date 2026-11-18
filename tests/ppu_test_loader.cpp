@@ -213,8 +213,10 @@ bool PPUTestLoader::run_simulation(bool check_mode3, bool verbose)
 			}
 		}
 
-		// Tick the PPU
+		// Tick the PPU. The LCD is a passive mirror now, so refresh it before
+		// inspecting the STAT mode.
 		m_ppu->ppu_tick();
+		m_ppu->sync_lcd();
 
 		// Count Mode3 ticks
 		if(m_lcd->get_lcds_mode() == LCDMode::MODE_XFER)

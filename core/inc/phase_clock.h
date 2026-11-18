@@ -33,6 +33,12 @@ class PhaseClock
             m_value = 0;
         }
 
+        // Savestate restore. The caller validates the range.
+        void set_value(u8 value)
+        {
+            m_value = static_cast<u8>(value & 0x03);
+        }
+
     private:
         u8 m_value = 0;
 };

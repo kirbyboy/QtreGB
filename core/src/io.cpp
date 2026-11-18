@@ -1,6 +1,15 @@
 #include "io.h"
+#include "state_stream.h"
 
 using namespace qtreGB;
+
+namespace
+{
+
+constexpr u16 IO_SB = 0x0001;
+constexpr u16 IO_SC = 0x0002;
+
+} // namespace
 
 static u8 ly = 0;
 
@@ -40,4 +49,23 @@ void IO::io_write(u16 address, u8 value)
 	{
 		m_sc = value;
 	}
+}
+
+void IO::save_state(StateWriter& writer) const
+{
+	writer.write_u8(IO_SB, m_sb);
+	writer.write_u8(IO_SC, m_sc);
+}
+
+bool IO::load_state(StateReader& reader)
+{
+	u8 sb = 0;
+	u8 sc = 0;
+	if(!reader.read_u8(IO_SB, sb) || !reader.read_u8(IO_SC, sc))
+	{
+		return false;
+	}
+	m_sb = sb;
+	m_sc = sc;
+	return true;
 }

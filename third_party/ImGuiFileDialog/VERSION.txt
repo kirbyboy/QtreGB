@@ -1,0 +1,7 @@
+ImGuiFileDialog v0.6.8
+https://github.com/aiekick/ImGuiFileDialog
+commit ee77f190861193a995435c388682f1512f6fd29a
+
+Vendored in third_party/ImGuiFileDialog. The main Makefile builds
+libImGuiFileDialog.a from this directory when it is missing. Local changes are
+documented in LOCAL_CHANGES.md.

@@ -3,11 +3,13 @@
 
 #include <functional>
 #include "interrupt_controller.h"
-#include "tagged_serializer.h"
 #include "types.h"
 
 namespace qtreGB
 {
+
+class StateReader;
+class StateWriter;
 
 class Timer
 {
@@ -30,7 +32,8 @@ class Timer
 		void write_tac(u8 value);
 
 		// --- Savestates ---
-		void serialize(TaggedSerializer& s);
+		void save_state(StateWriter& writer) const;
+		bool load_state(StateReader& reader);
 
 	private:
 		u16 m_div;

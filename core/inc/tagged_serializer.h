@@ -33,19 +33,14 @@ struct is_char_array<const char[N]> : std::true_type {};
 template<typename T>
 inline constexpr bool is_char_array_v = is_char_array<T>::value;
 
-// TODO (savestates): pending format robustness. Everything is an internal
-// change, process(tag, value) and existing callers do not change:
-//  - The format does not store the value size, only the tag size, so
-//    skipUnknownTag cannot skip an unknown tag (the cursor ends up
-//    misaligned). Solution: prefix each entry with a [u32 len] of the value.
-//  - readNextTag does not distinguish end of stream from a corrupt tag, and
-//    process ignores the return bool (a truncated stream would be swallowed
-//    silently).
-//  - enum class types are not serialized: is_arithmetic_v is false for them
-//    and they would fall into the fallback serialize(*this). Solution: an
-//    is_enum_v branch with a cast to the underlying type.
-//  - There is no type/size verification when reading: a corrupt stream
-//    produces silent corruption instead of a detected error.
+// Legacy helper. It is kept only for the PPU test-fixture loader
+// (tests/ppu_test_loader.*), which reads a small internal format.
+//
+// Do not use it for savestates: it does not store the value size, cannot skip
+// unknown tags, does not distinguish EOF from corruption, does not support
+// enum class and does not verify type/size on read. The core savestate format
+// lives in state_stream.h (versioned header, TLV entries, CRC and explicit
+// errors).
 
 class TaggedSerializer
 {

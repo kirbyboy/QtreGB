@@ -15,12 +15,19 @@ run_mts:
 run_blargg:
 	$(MAKE) --no-print-directory -C blargg run
 
+run_regress:
+	$(MAKE) --no-print-directory -C regress run
+
+update_regress:
+	$(MAKE) --no-print-directory -C regress update
+
 clean:
 	$(MAKE) --no-print-directory -C core clean
 	$(MAKE) --no-print-directory -C gui clean
 	$(MAKE) --no-print-directory -C tests clean
 	$(MAKE) --no-print-directory -C mts clean
 	$(MAKE) --no-print-directory -C blargg clean
+	$(MAKE) --no-print-directory -C regress clean
 	$(RM) -r $(OBJDIR) $(DEPDIR) $(BUILDDIR)
 
-.PHONY: all clean run_tests run_mts run_blargg
+.PHONY: all clean run_tests run_mts run_blargg run_regress update_regress

@@ -22,6 +22,8 @@ namespace qtreGB
 
 class QtreGB;
 class APU;
+class StateReader;
+class StateWriter;
 
 class Bus : public IBus
 {
@@ -36,6 +38,9 @@ class Bus : public IBus
 		void set_boot_rom_enabled(bool enabled) { m_boot_rom_enabled = enabled; }
 		bool is_boot_rom_enabled() const { return m_boot_rom_enabled; }
 		void disable_boot_rom() { m_boot_rom_enabled = false; }
+
+		void save_state(StateWriter& writer) const;
+		bool load_state(StateReader& reader);
 
 	private:
 		std::array<u8, 0x100> m_boot_rom{};

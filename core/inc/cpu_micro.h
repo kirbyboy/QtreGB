@@ -4,12 +4,13 @@
 #include "types.h"
 #include "ibus.h"
 #include "icpu_registers.h"
-#include "tagged_serializer.h"
 
 namespace qtreGB
 {
 
 class ErrorReporter;
+class StateReader;
+class StateWriter;
 
 // Micro-op CPU.
 //
@@ -95,11 +96,12 @@ class CpuMicro : public ICPURegisters
 		{
 			u8 a, f, b, c, d, e, h, l;
 			u16 pc, sp;
-
-			void serialize(TaggedSerializer& s);
 		};
 
-		void serialize(TaggedSerializer& s);
+		// Full CPU state, including mid-instruction progress. The identity of
+		// m_instruction is stored as a small enum and rebuilt on load.
+		void save_state(StateWriter& writer) const;
+		bool load_state(StateReader& reader);
 
 	private:
 		struct MicroOp

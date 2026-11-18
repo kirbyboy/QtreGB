@@ -1,6 +1,18 @@
 #include "dma.h"
+#include "state_stream.h"
 
 using namespace qtreGB;
+
+namespace
+{
+
+constexpr u16 DMA_ACTIVE = 0x0001;
+constexpr u16 DMA_PENDING = 0x0002;
+constexpr u16 DMA_BYTE = 0x0003;
+constexpr u16 DMA_VALUE = 0x0004;
+constexpr u16 DMA_START_DELAY = 0x0005;
+
+} // namespace
 
 void DMA::dma_start(u8 start)
 {
@@ -82,4 +94,50 @@ void DMA::reset()
 	{
 		m_ppu->set_dma_active(false);
 	}
+}
+
+void DMA::save_state(StateWriter& writer) const
+{
+	writer.write_bool(DMA_ACTIVE, m_active);
+	writer.write_bool(DMA_PENDING, m_pending);
+	writer.write_u8(DMA_BYTE, m_byte);
+	writer.write_u8(DMA_VALUE, m_value);
+	writer.write_u8(DMA_START_DELAY, m_start_delay);
+}
+
+bool DMA::load_state(StateReader& reader)
+{
+	bool active = false;
+	bool pending = false;
+	u8 byte = 0;
+	u8 value = 0;
+	u8 start_delay = 0;
+
+	if(!reader.read_bool(DMA_ACTIVE, active) ||
+	   !reader.read_bool(DMA_PENDING, pending) ||
+	   !reader.read_u8(DMA_BYTE, byte) ||
+	   !reader.read_u8(DMA_VALUE, value) ||
+	   !reader.read_u8(DMA_START_DELAY, start_delay))
+	{
+		return false;
+	}
+
+	if(start_delay > 2 || byte > 0xA0 || (active && !pending))
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+
+	m_active = active;
+	m_pending = pending;
+	m_byte = byte;
+	m_value = value;
+	m_start_delay = start_delay;
+
+	// The PPU mirrors the DMA ownership flag; keep it in sync on load.
+	if(m_ppu)
+	{
+		m_ppu->set_dma_active(m_active);
+	}
+	return true;
 }

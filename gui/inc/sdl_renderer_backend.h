@@ -10,7 +10,12 @@ class SDLRendererBackend : public IGuiBackend
 {
 	public:
 		SDLRendererBackend();
-		void init();
+		void init(int width, int height, bool maximized);
+		int window_width() const;
+		int window_height() const;
+		bool window_maximized() const;
+		bool window_fullscreen() const;
+		int display_refresh_hz() const;
 		void new_frame() override;
 		void render_draw_data() override;
 		void handle_event(const void* event) override;

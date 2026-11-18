@@ -1,4 +1,5 @@
 #include <SDL2/SDL.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,11 +32,21 @@ int find_render_driver(const char* name)
 SDLRendererBackend::SDLRendererBackend()
 {}
 
-void SDLRendererBackend::init()
+void SDLRendererBackend::init(int width, int height, bool maximized)
 {
-	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER);
+	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER |
+		SDL_INIT_GAMECONTROLLER);
 	SDL_SetHint(SDL_HINT_RENDER_VSYNC, "1");
-	m_window = SDL_CreateWindow("QtreGB", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+
+	width = std::max(160, width);
+	height = std::max(144, height);
+	m_window = SDL_CreateWindow("QtreGB", SDL_WINDOWPOS_CENTERED,
+		SDL_WINDOWPOS_CENTERED, width, height,
+		SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+	if(m_window != nullptr && maximized)
+	{
+		SDL_MaximizeWindow(m_window);
+	}
 
 	const char* requested = std::getenv("QTR_RENDERER");
 	const int driver_index = find_render_driver(requested);
@@ -77,12 +88,67 @@ void SDLRendererBackend::init()
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
+	// QtreGB stores its settings in its own .ini; ImGui must not create a
+	// separate imgui.ini in the working directory.
+	ImGui::GetIO().IniFilename = nullptr;
 	ImGui::StyleColorsDark();
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
 	ImGui_ImplSDL2_InitForSDLRenderer(m_window, m_renderer);
 	ImGui_ImplSDLRenderer2_Init(m_renderer);
+}
+
+int SDLRendererBackend::window_width() const
+{
+	int width = 0;
+	if(m_window != nullptr)
+	{
+		SDL_GetWindowSize(m_window, &width, nullptr);
+	}
+	return width;
+}
+
+int SDLRendererBackend::window_height() const
+{
+	int height = 0;
+	if(m_window != nullptr)
+	{
+		SDL_GetWindowSize(m_window, nullptr, &height);
+	}
+	return height;
+}
+
+bool SDLRendererBackend::window_maximized() const
+{
+	return m_window != nullptr &&
+		(SDL_GetWindowFlags(m_window) & SDL_WINDOW_MAXIMIZED) != 0;
+}
+
+bool SDLRendererBackend::window_fullscreen() const
+{
+	if(m_window == nullptr)
+	{
+		return false;
+	}
+	const Uint32 flags = SDL_GetWindowFlags(m_window);
+	return (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
+}
+
+int SDLRendererBackend::display_refresh_hz() const
+{
+	if(m_window == nullptr)
+	{
+		return 0;
+	}
+
+	const int display = SDL_GetWindowDisplayIndex(m_window);
+	SDL_DisplayMode mode{};
+	if(display < 0 || SDL_GetCurrentDisplayMode(display, &mode) != 0)
+	{
+		return 0;
+	}
+	return mode.refresh_rate;
 }
 
 void SDLRendererBackend::new_frame()
@@ -104,11 +170,6 @@ void SDLRendererBackend::render_draw_data()
 void SDLRendererBackend::handle_event(const void *event)
 {
 	const SDL_Event* sdl_event = static_cast<const SDL_Event*>(event);
-	if(sdl_event->type == SDL_KEYDOWN && sdl_event->key.repeat == 0 &&
-		sdl_event->key.keysym.sym == SDLK_f)
-	{
-		toggle_fullscreen();
-	}
 	ImGui_ImplSDL2_ProcessEvent(sdl_event);
 }
 

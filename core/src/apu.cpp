@@ -1,10 +1,99 @@
 #include "apu.h"
-#include "tagged_serializer.h"
+#include "state_stream.h"
 
 using namespace qtreGB;
 
 namespace
 {
+
+// Component-local field tags. See documentation/Game Boy/savestate-core-format.md.
+constexpr u16 APU_NR10 = 0x0001;
+constexpr u16 APU_NR11 = 0x0002;
+constexpr u16 APU_NR12 = 0x0003;
+constexpr u16 APU_NR13 = 0x0004;
+constexpr u16 APU_NR14 = 0x0005;
+constexpr u16 APU_NR21 = 0x0006;
+constexpr u16 APU_NR22 = 0x0007;
+constexpr u16 APU_NR23 = 0x0008;
+constexpr u16 APU_NR24 = 0x0009;
+constexpr u16 APU_NR30 = 0x000A;
+constexpr u16 APU_NR31 = 0x000B;
+constexpr u16 APU_NR32 = 0x000C;
+constexpr u16 APU_NR33 = 0x000D;
+constexpr u16 APU_NR34 = 0x000E;
+constexpr u16 APU_NR41 = 0x000F;
+constexpr u16 APU_NR42 = 0x0010;
+constexpr u16 APU_NR43 = 0x0011;
+constexpr u16 APU_NR44 = 0x0012;
+constexpr u16 APU_NR50 = 0x0013;
+constexpr u16 APU_NR51 = 0x0014;
+constexpr u16 APU_WAVE_RAM = 0x0020;
+constexpr u16 APU_POWERED = 0x0021;
+constexpr u16 APU_LAST_DIV = 0x0022;
+constexpr u16 APU_FRAME_STEP = 0x0023;
+constexpr u16 APU_PHASE = 0x0024;
+constexpr u16 APU_CYCLE = 0x0025;
+constexpr u16 APU_SAMPLE_ACC = 0x0026;
+constexpr u16 APU_HPF_LEFT = 0x0027;
+constexpr u16 APU_HPF_RIGHT = 0x0028;
+
+constexpr u16 APU_CHANNEL_CH1 = 0x0100;
+constexpr u16 APU_CHANNEL_CH2 = 0x0101;
+constexpr u16 APU_CHANNEL_CH3 = 0x0102;
+constexpr u16 APU_CHANNEL_CH4 = 0x0103;
+
+constexpr u16 PULSE_ENABLED = 0x0001;
+constexpr u16 PULSE_DUTY = 0x0002;
+constexpr u16 PULSE_DUTY_STEP = 0x0003;
+constexpr u16 PULSE_FREQUENCY = 0x0004;
+constexpr u16 PULSE_TIMER = 0x0005;
+constexpr u16 PULSE_TRIGGER_DELAY = 0x0006;
+constexpr u16 PULSE_VOLUME = 0x0007;
+constexpr u16 PULSE_INITIAL_VOLUME = 0x0008;
+constexpr u16 PULSE_ENV_PERIOD = 0x0009;
+constexpr u16 PULSE_ENV_TIMER = 0x000A;
+constexpr u16 PULSE_ENV_RELOADED = 0x000B;
+constexpr u16 PULSE_ENV_PENDING = 0x000C;
+constexpr u16 PULSE_ENV_INCREASE = 0x000D;
+constexpr u16 PULSE_LENGTH = 0x000E;
+constexpr u16 PULSE_LENGTH_ENABLE = 0x000F;
+constexpr u16 PULSE_SHADOW_FREQUENCY = 0x0010;
+constexpr u16 PULSE_SWEEP_PERIOD = 0x0011;
+constexpr u16 PULSE_SWEEP_SHIFT = 0x0012;
+constexpr u16 PULSE_SWEEP_TIMER = 0x0013;
+constexpr u16 PULSE_SWEEP_DECREASE = 0x0014;
+constexpr u16 PULSE_SWEEP_ENABLED = 0x0015;
+constexpr u16 PULSE_SWEEP_NEGATE_USED = 0x0016;
+
+constexpr u16 WAVE_ENABLED = 0x0001;
+constexpr u16 WAVE_FREQUENCY = 0x0002;
+constexpr u16 WAVE_TIMER = 0x0003;
+constexpr u16 WAVE_TRIGGER_DELAY = 0x0004;
+constexpr u16 WAVE_SAMPLE_INDEX = 0x0005;
+constexpr u16 WAVE_SAMPLE = 0x0006;
+constexpr u16 WAVE_LEVEL = 0x0007;
+constexpr u16 WAVE_LENGTH = 0x0008;
+constexpr u16 WAVE_LENGTH_ENABLE = 0x0009;
+constexpr u16 WAVE_SAMPLED_BYTE = 0x000A;
+constexpr u16 WAVE_WINDOW_TTL = 0x000B;
+constexpr u16 WAVE_LAST_SAMPLE_CYCLE = 0x000C;
+constexpr u16 WAVE_SAMPLE_VALID = 0x000D;
+
+constexpr u16 NOISE_ENABLED = 0x0001;
+constexpr u16 NOISE_TIMER = 0x0002;
+constexpr u16 NOISE_LFSR = 0x0003;
+constexpr u16 NOISE_SHORT_MODE = 0x0004;
+constexpr u16 NOISE_VOLUME = 0x0005;
+constexpr u16 NOISE_INITIAL_VOLUME = 0x0006;
+constexpr u16 NOISE_ENV_PERIOD = 0x0007;
+constexpr u16 NOISE_ENV_TIMER = 0x0008;
+constexpr u16 NOISE_ENV_RELOADED = 0x0009;
+constexpr u16 NOISE_ENV_PENDING = 0x000A;
+constexpr u16 NOISE_ENV_INCREASE = 0x000B;
+constexpr u16 NOISE_LENGTH = 0x000C;
+constexpr u16 NOISE_LENGTH_ENABLE = 0x000D;
+constexpr u16 NOISE_CLOCK_SHIFT = 0x000E;
+constexpr u16 NOISE_DIVISOR_CODE = 0x000F;
 
 // One pulse period, one entry per duty step. 1 = high, 0 = low.
 constexpr u8 DUTY[4][8] = {
@@ -365,120 +454,310 @@ void APU::update_envelope(Noise& channel)
 	}
 }
 
-void APU::Pulse::serialize(TaggedSerializer& s)
+void APU::Pulse::save_state(StateWriter& writer) const
 {
-	s.process("enabled", enabled);
-	s.process("duty", duty);
-	s.process("duty_step", duty_step);
-	s.process("frequency", frequency);
-	s.process("timer", timer);
-	s.process("trigger_delay", trigger_delay);
-	s.process("volume", volume);
-	s.process("initial_volume", initial_volume);
-	s.process("env_period", env_period);
-	s.process("env_timer", env_timer);
-	s.process("env_reloaded", env_reloaded);
-	s.process("env_pending", env_pending);
-	s.process("env_increase", env_increase);
-	s.process("length", length);
-	s.process("length_enable", length_enable);
-	s.process("shadow_frequency", shadow_frequency);
-	s.process("sweep_period", sweep_period);
-	s.process("sweep_shift", sweep_shift);
-	s.process("sweep_timer", sweep_timer);
-	s.process("sweep_decrease", sweep_decrease);
-	s.process("sweep_enabled", sweep_enabled);
-	s.process("sweep_negate_used", sweep_negate_used);
+	writer.write_bool(PULSE_ENABLED, enabled);
+	writer.write_u8(PULSE_DUTY, duty);
+	writer.write_u8(PULSE_DUTY_STEP, duty_step);
+	writer.write_u16(PULSE_FREQUENCY, frequency);
+	writer.write_i32(PULSE_TIMER, static_cast<int32_t>(timer));
+	writer.write_u8(PULSE_TRIGGER_DELAY, trigger_delay);
+	writer.write_u8(PULSE_VOLUME, volume);
+	writer.write_u8(PULSE_INITIAL_VOLUME, initial_volume);
+	writer.write_u8(PULSE_ENV_PERIOD, env_period);
+	writer.write_u8(PULSE_ENV_TIMER, env_timer);
+	writer.write_bool(PULSE_ENV_RELOADED, env_reloaded);
+	writer.write_bool(PULSE_ENV_PENDING, env_pending);
+	writer.write_bool(PULSE_ENV_INCREASE, env_increase);
+	writer.write_u16(PULSE_LENGTH, length);
+	writer.write_bool(PULSE_LENGTH_ENABLE, length_enable);
+	writer.write_u16(PULSE_SHADOW_FREQUENCY, shadow_frequency);
+	writer.write_u8(PULSE_SWEEP_PERIOD, sweep_period);
+	writer.write_u8(PULSE_SWEEP_SHIFT, sweep_shift);
+	writer.write_u8(PULSE_SWEEP_TIMER, sweep_timer);
+	writer.write_bool(PULSE_SWEEP_DECREASE, sweep_decrease);
+	writer.write_bool(PULSE_SWEEP_ENABLED, sweep_enabled);
+	writer.write_bool(PULSE_SWEEP_NEGATE_USED, sweep_negate_used);
 }
 
-void APU::Wave::serialize(TaggedSerializer& s)
+bool APU::Pulse::load_state(StateReader& reader)
 {
-	s.process("enabled", enabled);
-	s.process("frequency", frequency);
-	s.process("timer", timer);
-	s.process("trigger_delay", trigger_delay);
-	s.process("sample_index", sample_index);
-	s.process("sample", sample);
-	s.process("level", level);
-	s.process("length", length);
-	s.process("length_enable", length_enable);
-	s.process("sampled_byte", sampled_byte);
-	s.process("window_ttl", window_ttl);
-	s.process("last_sample_cycle", last_sample_cycle);
-	s.process("sample_valid", sample_valid);
-}
+	const Pulse snapshot = *this;
+	int32_t timer_value = 0;
 
-void APU::Noise::serialize(TaggedSerializer& s)
-{
-	s.process("enabled", enabled);
-	s.process("timer", timer);
-	s.process("lfsr", lfsr);
-	s.process("short_mode", short_mode);
-	s.process("volume", volume);
-	s.process("initial_volume", initial_volume);
-	s.process("env_period", env_period);
-	s.process("env_timer", env_timer);
-	s.process("env_reloaded", env_reloaded);
-	s.process("env_pending", env_pending);
-	s.process("env_increase", env_increase);
-	s.process("length", length);
-	s.process("length_enable", length_enable);
-	s.process("clock_shift", clock_shift);
-	s.process("divisor_code", divisor_code);
-}
-
-void APU::serialize(TaggedSerializer& s)
-{
-	s.process("powered", m_powered);
-
-	s.process("nr10", m_nr10);
-	s.process("nr11", m_nr11);
-	s.process("nr12", m_nr12);
-	s.process("nr13", m_nr13);
-	s.process("nr14", m_nr14);
-	s.process("nr21", m_nr21);
-	s.process("nr22", m_nr22);
-	s.process("nr23", m_nr23);
-	s.process("nr24", m_nr24);
-	s.process("nr30", m_nr30);
-	s.process("nr31", m_nr31);
-	s.process("nr32", m_nr32);
-	s.process("nr33", m_nr33);
-	s.process("nr34", m_nr34);
-	s.process("nr41", m_nr41);
-	s.process("nr42", m_nr42);
-	s.process("nr43", m_nr43);
-	s.process("nr44", m_nr44);
-	s.process("nr50", m_nr50);
-	s.process("nr51", m_nr51);
-
-	for(int i = 0; i < 16; ++i)
+	if(!reader.read_bool(PULSE_ENABLED, enabled) ||
+	   !reader.read_u8(PULSE_DUTY, duty) ||
+	   !reader.read_u8(PULSE_DUTY_STEP, duty_step) ||
+	   !reader.read_u16(PULSE_FREQUENCY, frequency) ||
+	   !reader.read_i32(PULSE_TIMER, timer_value) ||
+	   !reader.read_u8(PULSE_TRIGGER_DELAY, trigger_delay) ||
+	   !reader.read_u8(PULSE_VOLUME, volume) ||
+	   !reader.read_u8(PULSE_INITIAL_VOLUME, initial_volume) ||
+	   !reader.read_u8(PULSE_ENV_PERIOD, env_period) ||
+	   !reader.read_u8(PULSE_ENV_TIMER, env_timer) ||
+	   !reader.read_bool(PULSE_ENV_RELOADED, env_reloaded) ||
+	   !reader.read_bool(PULSE_ENV_PENDING, env_pending) ||
+	   !reader.read_bool(PULSE_ENV_INCREASE, env_increase) ||
+	   !reader.read_u16(PULSE_LENGTH, length) ||
+	   !reader.read_bool(PULSE_LENGTH_ENABLE, length_enable) ||
+	   !reader.read_u16(PULSE_SHADOW_FREQUENCY, shadow_frequency) ||
+	   !reader.read_u8(PULSE_SWEEP_PERIOD, sweep_period) ||
+	   !reader.read_u8(PULSE_SWEEP_SHIFT, sweep_shift) ||
+	   !reader.read_u8(PULSE_SWEEP_TIMER, sweep_timer) ||
+	   !reader.read_bool(PULSE_SWEEP_DECREASE, sweep_decrease) ||
+	   !reader.read_bool(PULSE_SWEEP_ENABLED, sweep_enabled) ||
+	   !reader.read_bool(PULSE_SWEEP_NEGATE_USED, sweep_negate_used))
 	{
-		s.process("wave" + std::to_string(i), m_wave_ram[i]);
+		*this = snapshot;
+		return false;
 	}
 
-	m_ch1.serialize(s);
-	m_ch2.serialize(s);
-	m_ch3.serialize(s);
-	m_ch4.serialize(s);
-
-	s.process("last_div", m_last_div);
-	s.process("frame_step", m_frame_step);
-	s.process("apu_phase", m_apu_phase);
-	s.process("cycle", m_cycle);
-	s.process("sample_acc", m_sample_acc);
-	s.process("hpf_left", m_hpf_left);
-	s.process("hpf_right", m_hpf_right);
-
-	if(s.isReading())
+	if(duty > 3 || duty_step > 7 || frequency > 0x7FF ||
+	   volume > 15 || initial_volume > 15 || env_period > 7 ||
+	   env_timer > 7 || length > 64 || sweep_period > 7 ||
+	   sweep_shift > 7 || sweep_timer > 8)
 	{
-		// The PCM ring buffer is output staging, not machine state.
-		m_ring_read = 0;
-		m_ring_write = 0;
-		m_ring_count = 0;
-		m_ch3.access_window = false;
-		m_ch3.access_byte = 0;
+		*this = snapshot;
+		reader.mark_error(StateError::BadValue);
+		return false;
 	}
+
+	timer = static_cast<int>(timer_value);
+	return true;
+}
+
+void APU::Wave::save_state(StateWriter& writer) const
+{
+	writer.write_bool(WAVE_ENABLED, enabled);
+	writer.write_u16(WAVE_FREQUENCY, frequency);
+	writer.write_i32(WAVE_TIMER, static_cast<int32_t>(timer));
+	writer.write_u8(WAVE_TRIGGER_DELAY, trigger_delay);
+	writer.write_u8(WAVE_SAMPLE_INDEX, sample_index);
+	writer.write_u8(WAVE_SAMPLE, sample);
+	writer.write_u8(WAVE_LEVEL, level);
+	writer.write_u16(WAVE_LENGTH, length);
+	writer.write_bool(WAVE_LENGTH_ENABLE, length_enable);
+	writer.write_u8(WAVE_SAMPLED_BYTE, sampled_byte);
+	writer.write_u8(WAVE_WINDOW_TTL, window_ttl);
+	writer.write_u32(WAVE_LAST_SAMPLE_CYCLE, last_sample_cycle);
+	writer.write_bool(WAVE_SAMPLE_VALID, sample_valid);
+}
+
+bool APU::Wave::load_state(StateReader& reader)
+{
+	const Wave snapshot = *this;
+	int32_t timer_value = 0;
+
+	if(!reader.read_bool(WAVE_ENABLED, enabled) ||
+	   !reader.read_u16(WAVE_FREQUENCY, frequency) ||
+	   !reader.read_i32(WAVE_TIMER, timer_value) ||
+	   !reader.read_u8(WAVE_TRIGGER_DELAY, trigger_delay) ||
+	   !reader.read_u8(WAVE_SAMPLE_INDEX, sample_index) ||
+	   !reader.read_u8(WAVE_SAMPLE, sample) ||
+	   !reader.read_u8(WAVE_LEVEL, level) ||
+	   !reader.read_u16(WAVE_LENGTH, length) ||
+	   !reader.read_bool(WAVE_LENGTH_ENABLE, length_enable) ||
+	   !reader.read_u8(WAVE_SAMPLED_BYTE, sampled_byte) ||
+	   !reader.read_u8(WAVE_WINDOW_TTL, window_ttl) ||
+	   !reader.read_u32(WAVE_LAST_SAMPLE_CYCLE, last_sample_cycle) ||
+	   !reader.read_bool(WAVE_SAMPLE_VALID, sample_valid))
+	{
+		*this = snapshot;
+		return false;
+	}
+
+	if(frequency > 0x7FF || sample_index > 31 || sample > 15 ||
+	   level > 3 || length > 256)
+	{
+		*this = snapshot;
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+
+	timer = static_cast<int>(timer_value);
+	return true;
+}
+
+void APU::Noise::save_state(StateWriter& writer) const
+{
+	writer.write_bool(NOISE_ENABLED, enabled);
+	writer.write_i32(NOISE_TIMER, static_cast<int32_t>(timer));
+	writer.write_u16(NOISE_LFSR, lfsr);
+	writer.write_bool(NOISE_SHORT_MODE, short_mode);
+	writer.write_u8(NOISE_VOLUME, volume);
+	writer.write_u8(NOISE_INITIAL_VOLUME, initial_volume);
+	writer.write_u8(NOISE_ENV_PERIOD, env_period);
+	writer.write_u8(NOISE_ENV_TIMER, env_timer);
+	writer.write_bool(NOISE_ENV_RELOADED, env_reloaded);
+	writer.write_bool(NOISE_ENV_PENDING, env_pending);
+	writer.write_bool(NOISE_ENV_INCREASE, env_increase);
+	writer.write_u16(NOISE_LENGTH, length);
+	writer.write_bool(NOISE_LENGTH_ENABLE, length_enable);
+	writer.write_u8(NOISE_CLOCK_SHIFT, clock_shift);
+	writer.write_u8(NOISE_DIVISOR_CODE, divisor_code);
+}
+
+bool APU::Noise::load_state(StateReader& reader)
+{
+	const Noise snapshot = *this;
+	int32_t timer_value = 0;
+
+	if(!reader.read_bool(NOISE_ENABLED, enabled) ||
+	   !reader.read_i32(NOISE_TIMER, timer_value) ||
+	   !reader.read_u16(NOISE_LFSR, lfsr) ||
+	   !reader.read_bool(NOISE_SHORT_MODE, short_mode) ||
+	   !reader.read_u8(NOISE_VOLUME, volume) ||
+	   !reader.read_u8(NOISE_INITIAL_VOLUME, initial_volume) ||
+	   !reader.read_u8(NOISE_ENV_PERIOD, env_period) ||
+	   !reader.read_u8(NOISE_ENV_TIMER, env_timer) ||
+	   !reader.read_bool(NOISE_ENV_RELOADED, env_reloaded) ||
+	   !reader.read_bool(NOISE_ENV_PENDING, env_pending) ||
+	   !reader.read_bool(NOISE_ENV_INCREASE, env_increase) ||
+	   !reader.read_u16(NOISE_LENGTH, length) ||
+	   !reader.read_bool(NOISE_LENGTH_ENABLE, length_enable) ||
+	   !reader.read_u8(NOISE_CLOCK_SHIFT, clock_shift) ||
+	   !reader.read_u8(NOISE_DIVISOR_CODE, divisor_code))
+	{
+		*this = snapshot;
+		return false;
+	}
+
+	if(volume > 15 || initial_volume > 15 || env_period > 7 ||
+	   env_timer > 7 || length > 64 || clock_shift > 15 ||
+	   divisor_code > 7)
+	{
+		*this = snapshot;
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+
+	timer = static_cast<int>(timer_value);
+	return true;
+}
+
+void APU::save_state(StateWriter& writer) const
+{
+	writer.write_u8(APU_NR10, m_nr10);
+	writer.write_u8(APU_NR11, m_nr11);
+	writer.write_u8(APU_NR12, m_nr12);
+	writer.write_u8(APU_NR13, m_nr13);
+	writer.write_u8(APU_NR14, m_nr14);
+	writer.write_u8(APU_NR21, m_nr21);
+	writer.write_u8(APU_NR22, m_nr22);
+	writer.write_u8(APU_NR23, m_nr23);
+	writer.write_u8(APU_NR24, m_nr24);
+	writer.write_u8(APU_NR30, m_nr30);
+	writer.write_u8(APU_NR31, m_nr31);
+	writer.write_u8(APU_NR32, m_nr32);
+	writer.write_u8(APU_NR33, m_nr33);
+	writer.write_u8(APU_NR34, m_nr34);
+	writer.write_u8(APU_NR41, m_nr41);
+	writer.write_u8(APU_NR42, m_nr42);
+	writer.write_u8(APU_NR43, m_nr43);
+	writer.write_u8(APU_NR44, m_nr44);
+	writer.write_u8(APU_NR50, m_nr50);
+	writer.write_u8(APU_NR51, m_nr51);
+
+	writer.write_bytes(APU_WAVE_RAM, m_wave_ram, sizeof(m_wave_ram));
+	writer.write_bool(APU_POWERED, m_powered);
+
+	writer.begin_chunk(APU_CHANNEL_CH1);
+	m_ch1.save_state(writer);
+	writer.end_chunk();
+	writer.begin_chunk(APU_CHANNEL_CH2);
+	m_ch2.save_state(writer);
+	writer.end_chunk();
+	writer.begin_chunk(APU_CHANNEL_CH3);
+	m_ch3.save_state(writer);
+	writer.end_chunk();
+	writer.begin_chunk(APU_CHANNEL_CH4);
+	m_ch4.save_state(writer);
+	writer.end_chunk();
+
+	writer.write_u16(APU_LAST_DIV, m_last_div);
+	writer.write_u8(APU_FRAME_STEP, m_frame_step);
+	writer.write_u8(APU_PHASE, m_apu_phase);
+	writer.write_u32(APU_CYCLE, m_cycle);
+	writer.write_u32(APU_SAMPLE_ACC, m_sample_acc);
+	writer.write_f32(APU_HPF_LEFT, m_hpf_left);
+	writer.write_f32(APU_HPF_RIGHT, m_hpf_right);
+}
+
+bool APU::load_state(StateReader& reader)
+{
+	const APU snapshot = *this;
+
+	if(!reader.read_u8(APU_NR10, m_nr10) ||
+	   !reader.read_u8(APU_NR11, m_nr11) ||
+	   !reader.read_u8(APU_NR12, m_nr12) ||
+	   !reader.read_u8(APU_NR13, m_nr13) ||
+	   !reader.read_u8(APU_NR14, m_nr14) ||
+	   !reader.read_u8(APU_NR21, m_nr21) ||
+	   !reader.read_u8(APU_NR22, m_nr22) ||
+	   !reader.read_u8(APU_NR23, m_nr23) ||
+	   !reader.read_u8(APU_NR24, m_nr24) ||
+	   !reader.read_u8(APU_NR30, m_nr30) ||
+	   !reader.read_u8(APU_NR31, m_nr31) ||
+	   !reader.read_u8(APU_NR32, m_nr32) ||
+	   !reader.read_u8(APU_NR33, m_nr33) ||
+	   !reader.read_u8(APU_NR34, m_nr34) ||
+	   !reader.read_u8(APU_NR41, m_nr41) ||
+	   !reader.read_u8(APU_NR42, m_nr42) ||
+	   !reader.read_u8(APU_NR43, m_nr43) ||
+	   !reader.read_u8(APU_NR44, m_nr44) ||
+	   !reader.read_u8(APU_NR50, m_nr50) ||
+	   !reader.read_u8(APU_NR51, m_nr51) ||
+	   !reader.read_bytes(APU_WAVE_RAM, m_wave_ram, sizeof(m_wave_ram)) ||
+	   !reader.read_bool(APU_POWERED, m_powered))
+	{
+		*this = snapshot;
+		return false;
+	}
+
+	if(!reader.begin_chunk(APU_CHANNEL_CH1) ||
+	   !m_ch1.load_state(reader) ||
+	   !reader.end_chunk() ||
+	   !reader.begin_chunk(APU_CHANNEL_CH2) ||
+	   !m_ch2.load_state(reader) ||
+	   !reader.end_chunk() ||
+	   !reader.begin_chunk(APU_CHANNEL_CH3) ||
+	   !m_ch3.load_state(reader) ||
+	   !reader.end_chunk() ||
+	   !reader.begin_chunk(APU_CHANNEL_CH4) ||
+	   !m_ch4.load_state(reader) ||
+	   !reader.end_chunk())
+	{
+		*this = snapshot;
+		return false;
+	}
+
+	if(!reader.read_u16(APU_LAST_DIV, m_last_div) ||
+	   !reader.read_u8(APU_FRAME_STEP, m_frame_step) ||
+	   !reader.read_u8(APU_PHASE, m_apu_phase) ||
+	   !reader.read_u32(APU_CYCLE, m_cycle) ||
+	   !reader.read_u32(APU_SAMPLE_ACC, m_sample_acc) ||
+	   !reader.read_f32(APU_HPF_LEFT, m_hpf_left) ||
+	   !reader.read_f32(APU_HPF_RIGHT, m_hpf_right))
+	{
+		*this = snapshot;
+		return false;
+	}
+
+	if(m_frame_step > 7 || m_apu_phase > 3)
+	{
+		*this = snapshot;
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+
+	// The PCM ring is output staging, not machine state. The wave-RAM access
+	// window is re-derived from the current T-cycle by prepare_tick().
+	m_ring_read = 0;
+	m_ring_write = 0;
+	m_ring_count = 0;
+	m_ch3.access_window = false;
+	m_ch3.access_byte = 0;
+	return true;
 }
 
 void APU::prepare_tick()

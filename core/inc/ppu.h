@@ -16,6 +16,8 @@ namespace qtreGB
 {
 
 class IBus;
+class StateReader;
+class StateWriter;
 
 // Native DMG PPU. Dot-driven pipeline with a per-dot state selector:
 //
@@ -45,6 +47,14 @@ class PPU
 		void ppu_sync_lcd_power() {}
 		void set_dma_active(bool active) { m_dma_active = active; }
 
+		void save_state(StateWriter& writer) const;
+		bool load_state(StateReader& reader);
+
+		// The LCD is a passive mirror used by savestates and tests. It is no
+		// longer refreshed on every dot; callers that need the current values
+		// request them explicitly.
+		void sync_lcd() const { sync_lcd_from_ppu(); }
+
 		u8 ppu_oam_read(u16 address);
 		void ppu_oam_write(u16 address, u8 value);
 		void ppu_oam_write_dma(u16 address, u8 value);
@@ -68,6 +78,7 @@ class PPU
 
 		// Debug-only accessors for the trace tools.
 		u16 debug_dots() const { return m_dots; }
+		u8 debug_ly() const { return m_ly; }
 		u8 debug_lx() const { return m_lx; }
 		u8 debug_fetch_x() const { return static_cast<u8>(m_bwf.lx); }
 		u8 debug_pushed_x() const { return m_lx >= 8 ? static_cast<u8>(m_lx - 8) : 0; }
@@ -162,6 +173,37 @@ class PPU
 
 		using TickSelector = void (PPU::*)();
 		using FetcherTickSelector = void (PPU::*)();
+
+		struct TickSelectorEntry
+		{
+			u8 id;
+			TickSelector fn;
+		};
+
+		struct FetcherSelectorEntry
+		{
+			u8 id;
+			FetcherTickSelector fn;
+		};
+
+		static const TickSelectorEntry* tick_selector_table(size_t& count);
+		static const FetcherSelectorEntry* fetcher_selector_table(size_t& count);
+		static u8 tick_selector_id(TickSelector fn);
+		static u8 fetcher_selector_id(FetcherTickSelector fn);
+		static bool tick_selector_from_id(u8 id, TickSelector& fn);
+		static bool fetcher_selector_from_id(u8 id, FetcherTickSelector& fn);
+
+		static u8 pack_lcdc(const Lcdc& value);
+		static void unpack_lcdc(u8 value, Lcdc& out);
+		static std::vector<u8> pack_oam_entries(const std::array<SpriteList, 168>& lists);
+		static bool unpack_oam_entries(const std::vector<u8>& data,
+			std::array<SpriteList, 168>& lists);
+		static std::vector<u8> pack_bg_fifo(const std::deque<BgPixel>& fifo);
+		static bool unpack_bg_fifo(const std::vector<u8>& data,
+			std::deque<BgPixel>& fifo);
+		static std::vector<u8> pack_obj_fifo(const std::deque<ObjPixel>& fifo);
+		static bool unpack_obj_fifo(const std::vector<u8>& data,
+			std::deque<ObjPixel>& fifo);
 
 		IBus *m_bus = nullptr;
 		LCD *m_lcd = nullptr;
@@ -412,7 +454,7 @@ class PPU
 		void handle_oam_scan_entry();
 
 		void push_pixel(u8 color);
-		void sync_lcd_from_ppu();
+		void sync_lcd_from_ppu() const;
 		void reset();
 };
 

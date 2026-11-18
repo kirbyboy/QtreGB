@@ -1,11 +1,45 @@
 #include "lcd.h"
 #include "QtreGB.h"
+#include "state_stream.h"
 #include <type_traits>
 #include <cstdlib>
 #include <cstdio>
 #include <cstdlib>
 
 using namespace qtreGB;
+
+namespace
+{
+
+constexpr u16 LCD_LCDC = 0x0001;
+constexpr u16 LCD_STAT = 0x0002;
+constexpr u16 LCD_SCY = 0x0003;
+constexpr u16 LCD_SCX = 0x0004;
+constexpr u16 LCD_LY = 0x0005;
+constexpr u16 LCD_LYC = 0x0006;
+constexpr u16 LCD_BGP = 0x0007;
+constexpr u16 LCD_OBP0 = 0x0008;
+constexpr u16 LCD_OBP1 = 0x0009;
+constexpr u16 LCD_WY = 0x000A;
+constexpr u16 LCD_WX = 0x000B;
+constexpr u16 LCD_PENDING_STAT = 0x0010;
+constexpr u16 LCD_PENDING_STAT_VALUE = 0x0011;
+constexpr u16 LCD_DELAYED_COUNT = 0x0012;
+constexpr u16 LCD_DELAYED_WRITES = 0x0013;
+
+bool valid_delayed_write_address(u8 address)
+{
+	switch(address)
+	{
+		case 0: case 2: case 3: case 5: case 7:
+		case 8: case 9: case 10: case 11:
+			return true;
+		default:
+			return false;
+	}
+}
+
+} // namespace
 
 void LCD::lcd_init(bool boot_rom)
 {
@@ -157,6 +191,116 @@ void LCD::write(u16 address, u8 value)
 		}
 		case 4: /*m_ly = value*/; break;	// read_only
 	}
+}
+
+void LCD::save_state(StateWriter& writer) const
+{
+	writer.write_u8(LCD_LCDC, m_lcdc);
+	writer.write_u8(LCD_STAT, m_lcds);
+	writer.write_u8(LCD_SCY, m_scroll_y);
+	writer.write_u8(LCD_SCX, m_scroll_x);
+	writer.write_u8(LCD_LY, m_ly);
+	writer.write_u8(LCD_LYC, m_lyc);
+	writer.write_u8(LCD_BGP, m_bg_palette);
+	writer.write_u8(LCD_OBP0, m_obj_palette_0);
+	writer.write_u8(LCD_OBP1, m_obj_palette_1);
+	writer.write_u8(LCD_WY, m_win_y);
+	writer.write_u8(LCD_WX, m_win_x);
+	writer.write_u8(LCD_PENDING_STAT, m_pending_stat);
+	writer.write_u8(LCD_PENDING_STAT_VALUE, m_pending_stat_value);
+	writer.write_u8(LCD_DELAYED_COUNT, m_delayed_write_count);
+
+	std::vector<u8> delayed;
+	delayed.reserve(static_cast<size_t>(m_delayed_write_count) * 3);
+	for(u8 i = 0; i < m_delayed_write_count; ++i)
+	{
+		delayed.push_back(m_delayed_writes[i].address);
+		delayed.push_back(m_delayed_writes[i].value);
+		delayed.push_back(m_delayed_writes[i].countdown);
+	}
+	writer.write_bytes(LCD_DELAYED_WRITES, delayed);
+}
+
+bool LCD::load_state(StateReader& reader)
+{
+	const LCD snapshot = *this;
+	const auto fail = [&]()
+	{
+		*this = snapshot;
+		return false;
+	};
+
+	u8 lcdc = 0;
+	u8 lcds = 0;
+	u8 scy = 0;
+	u8 scx = 0;
+	u8 ly = 0;
+	u8 lyc = 0;
+	u8 bgp = 0;
+	u8 obp0 = 0;
+	u8 obp1 = 0;
+	u8 wy = 0;
+	u8 wx = 0;
+	u8 pending_stat = 0;
+	u8 pending_value = 0;
+	u8 delayed_count = 0;
+	std::vector<u8> delayed;
+
+	if(!reader.read_u8(LCD_LCDC, lcdc) ||
+	   !reader.read_u8(LCD_STAT, lcds) ||
+	   !reader.read_u8(LCD_SCY, scy) ||
+	   !reader.read_u8(LCD_SCX, scx) ||
+	   !reader.read_u8(LCD_LY, ly) ||
+	   !reader.read_u8(LCD_LYC, lyc) ||
+	   !reader.read_u8(LCD_BGP, bgp) ||
+	   !reader.read_u8(LCD_OBP0, obp0) ||
+	   !reader.read_u8(LCD_OBP1, obp1) ||
+	   !reader.read_u8(LCD_WY, wy) ||
+	   !reader.read_u8(LCD_WX, wx) ||
+	   !reader.read_u8(LCD_PENDING_STAT, pending_stat) ||
+	   !reader.read_u8(LCD_PENDING_STAT_VALUE, pending_value) ||
+	   !reader.read_u8(LCD_DELAYED_COUNT, delayed_count) ||
+	   !reader.read_bytes(LCD_DELAYED_WRITES, delayed))
+	{
+		return fail();
+	}
+
+	if(delayed_count > 8 ||
+	   delayed.size() != static_cast<size_t>(delayed_count) * 3)
+	{
+		reader.mark_error(StateError::BadValue);
+		return fail();
+	}
+	for(u8 i = 0; i < delayed_count; ++i)
+	{
+		if(!valid_delayed_write_address(delayed[i * 3]))
+		{
+			reader.mark_error(StateError::BadValue);
+			return fail();
+		}
+	}
+
+	m_lcdc = lcdc;
+	m_lcds = lcds;
+	m_scroll_y = scy;
+	m_scroll_x = scx;
+	m_ly = ly;
+	m_lyc = lyc;
+	m_bg_palette = bgp;
+	m_obj_palette_0 = obp0;
+	m_obj_palette_1 = obp1;
+	m_win_y = wy;
+	m_win_x = wx;
+	m_pending_stat = pending_stat;
+	m_pending_stat_value = pending_value;
+	m_delayed_write_count = delayed_count;
+	for(u8 i = 0; i < delayed_count; ++i)
+	{
+		m_delayed_writes[i].address = delayed[i * 3 + 0];
+		m_delayed_writes[i].value = delayed[i * 3 + 1];
+		m_delayed_writes[i].countdown = delayed[i * 3 + 2];
+	}
+	return true;
 }
 
 bool LCD::get_lcdc_bgw_enable()

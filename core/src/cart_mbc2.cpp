@@ -1,11 +1,19 @@
 #include "types.h"
 #include "cart_mbc2.h"
+#include "state_stream.h"
 
 #include <algorithm>
 
 using namespace qtreGB;
 
 using namespace std;
+
+namespace
+{
+constexpr u16 CART_RAM_ENABLE = 0x0001;
+constexpr u16 CART_ROM_BANK = 0x0002;
+constexpr u16 CART_RAM = 0x0010;
+}
 
 CartMBC2::CartMBC2()
 {
@@ -124,4 +132,40 @@ void CartMBC2::write(u16 address, u8 value)
 				static_cast<u8>(0xF0 | (value & 0x0F)));
 		}
 	}
+}
+
+void CartMBC2::save_state(StateWriter& writer) const
+{
+	writer.write_bool(CART_RAM_ENABLE, m_ram_enable);
+	writer.write_u8(CART_ROM_BANK, m_rom_bank);
+	writer.write_bytes(CART_RAM, cart_ram_bytes(m_ram));
+}
+
+bool CartMBC2::load_state(StateReader& reader)
+{
+	bool ram_enable = false;
+	u8 rom_bank = 0;
+	std::vector<u8> ram;
+
+	if(!reader.read_bool(CART_RAM_ENABLE, ram_enable) ||
+	   !reader.read_u8(CART_ROM_BANK, rom_bank) ||
+	   !reader.read_bytes(CART_RAM, ram))
+	{
+		return false;
+	}
+
+	if(rom_bank > 0x0F)
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+	if(!cart_ram_load(ram, m_ram))
+	{
+		reader.mark_error(StateError::BadLength);
+		return false;
+	}
+
+	m_ram_enable = ram_enable;
+	m_rom_bank = rom_bank;
+	return true;
 }

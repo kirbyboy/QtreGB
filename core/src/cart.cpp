@@ -4,6 +4,8 @@
 #include "cart_mbc1.h"
 #include "cart_mbc2.h"
 #include "cart_mbc3.h"
+#include "cart_mbc5.h"
+#include "state_stream.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,6 +15,14 @@
 #include <utility>
 
 using namespace qtreGB;
+
+namespace
+{
+
+constexpr u16 CART_MAPPER = 0x0001;
+constexpr u16 CART_DATA = 0x0002;
+
+} // namespace
 
 Cart::Cart() : m_internal(nullptr)
 {
@@ -106,6 +116,16 @@ u8 Cart::load_cart(std::vector<u8> rom)
 			has_battery = rom[0x0147] == 0x0F || rom[0x0147] == 0x10 ||
 				rom[0x0147] == 0x13;
 			break;
+		case 0x19:
+		case 0x1A:
+		case 0x1B:
+		case 0x1C:
+		case 0x1D:
+		case 0x1E:
+			// 0x1C-0x1E are the MBC5 rumble variants.
+			internal = new CartMBC5(rom[0x0147] >= 0x1C);
+			has_battery = rom[0x0147] == 0x1B || rom[0x0147] == 0x1E;
+			break;
 		default:
 			report(ErrorCode::CART_TYPE_UNSUPPORTED);
 			return 4;
@@ -153,6 +173,63 @@ void Cart::write(u16 address, u8 value)
 {
 	if(m_internal == nullptr) return;
 	m_internal->write(address, value);
+}
+
+const std::vector<u8>& Cart::rom() const
+{
+	static const std::vector<u8> empty;
+	return m_internal != nullptr ? m_internal->rom() : empty;
+}
+
+void Cart::save_state(StateWriter& writer) const
+{
+	const u8 mapper = m_internal != nullptr ?
+		static_cast<u8>(m_internal->mapper()) :
+		static_cast<u8>(CartMapper::None);
+	writer.write_u8(CART_MAPPER, mapper);
+
+	if(m_internal != nullptr)
+	{
+		writer.begin_chunk(CART_DATA);
+		m_internal->save_state(writer);
+		writer.end_chunk();
+	}
+}
+
+bool Cart::load_state(StateReader& reader)
+{
+	u8 mapper = 0;
+	if(!reader.read_u8(CART_MAPPER, mapper))
+	{
+		return false;
+	}
+
+	if(mapper == static_cast<u8>(CartMapper::None))
+	{
+		if(m_internal != nullptr)
+		{
+			reader.mark_error(StateError::BadValue);
+			return false;
+		}
+		return true;
+	}
+
+	if(m_internal == nullptr ||
+	   mapper != static_cast<u8>(m_internal->mapper()))
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+
+	if(!reader.begin_chunk(CART_DATA))
+	{
+		return false;
+	}
+	if(!m_internal->load_state(reader))
+	{
+		return false;
+	}
+	return reader.end_chunk();
 }
 
 std::string Cart::battery_save_path(const std::string& rom_path)

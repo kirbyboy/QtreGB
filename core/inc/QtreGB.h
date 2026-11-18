@@ -9,6 +9,7 @@
 #include "memory.h"
 #include "cart.h"
 #include "io.h"
+#include "serial.h"
 #include "timer.h"
 #include "apu.h"
 #include "ppu.h"
@@ -19,6 +20,7 @@
 #include "bus_cpu_view.h"
 #include "error_reporter.h"
 #include "phase_clock.h"
+#include "state_stream.h"
 
 namespace qtreGB
 {
@@ -53,6 +55,7 @@ class QtreGB
 		Memory m_wram;
 		Memory m_hram;
 		IO m_io;
+		Serial m_serial;
 		Timer m_timer;
 		APU m_apu;
 		LCD m_lcd;
@@ -65,6 +68,12 @@ class QtreGB
 		bool m_frame_ready;
 
 		bool get_frame_ready();
+
+		// Core savestate blob. It contains emulator state only: metadata,
+		// thumbnails, compression, slots and rewind belong to the GUI.
+		// The header binds the blob to the exact loaded ROM image.
+		bool save_state(std::vector<u8>& out) const;
+		StateError load_state(const std::vector<u8>& in);
 
 	private:
 		void set_frame_ready(bool value);

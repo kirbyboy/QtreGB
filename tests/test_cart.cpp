@@ -209,6 +209,19 @@ TEST_CASE("Cart: battery flag follows the cartridge type")
 	CHECK_FALSE(cart.has_battery());
 	CHECK(cart.load_cart(make_rom(0x8000, 0x13, 0x00, 0x02)) == 0);
 	CHECK(cart.has_battery());
+
+	CHECK(cart.load_cart(make_rom(0x8000, 0x19, 0x00, 0x00)) == 0);
+	CHECK_FALSE(cart.has_battery());
+	CHECK(cart.load_cart(make_rom(0x8000, 0x1A, 0x00, 0x02)) == 0);
+	CHECK_FALSE(cart.has_battery());
+	CHECK(cart.load_cart(make_rom(0x8000, 0x1B, 0x00, 0x02)) == 0);
+	CHECK(cart.has_battery());
+	CHECK(cart.load_cart(make_rom(0x8000, 0x1C, 0x00, 0x00)) == 0);
+	CHECK_FALSE(cart.has_battery());
+	CHECK(cart.load_cart(make_rom(0x8000, 0x1D, 0x00, 0x02)) == 0);
+	CHECK_FALSE(cart.has_battery());
+	CHECK(cart.load_cart(make_rom(0x8000, 0x1E, 0x00, 0x02)) == 0);
+	CHECK(cart.has_battery());
 }
 
 TEST_CASE("Cart: MBC1 RAM enable requires lower nibble 0x0A")
@@ -392,6 +405,108 @@ TEST_CASE("Cart: MBC3 ROM and RAM banking")
 	CHECK(ram_cart.read(0xA000) == 0x10);
 	ram_cart.write(0x4000, 0x03);
 	CHECK(ram_cart.read(0xA000) == 0x13);
+}
+
+TEST_CASE("Cart: MBC5 ROM banking uses all 9 bits and allows bank 0")
+{
+	std::vector<u8> rom = make_rom(0x800000, 0x19, 0x08, 0x00);
+	rom[0x0000] = 0x42;	// bank 0, offset 0
+	set_bank_marker(rom, 0x001, 0x11);
+	set_bank_marker(rom, 0x100, 0x22);
+	set_bank_marker(rom, 0x1FF, 0x33);
+
+	Cart cart;
+	REQUIRE(cart.load_cart(rom) == 0);
+	CHECK(cart.read(0x0000) == 0x42);
+	CHECK(cart.read(0x4000) == 0x11);	// reset bank is 1
+
+	cart.write(0x2000, 0x00);
+	cart.write(0x3000, 0x00);
+	CHECK(cart.read(0x4000) == 0x42);	// MBC5 maps physical bank 0
+
+	cart.write(0x2000, 0x00);
+	cart.write(0x3000, 0x01);
+	CHECK(cart.read(0x4000) == 0x22);	// bank $100
+
+	cart.write(0x2000, 0xFF);
+	cart.write(0x3000, 0x01);
+	CHECK(cart.read(0x4000) == 0x33);	// bank $1FF
+
+	cart.write(0x2000, 0x01);
+	cart.write(0x3000, 0xFE);	// only bit 0 of the high register is wired
+	CHECK(cart.read(0x4000) == 0x11);	// bank 1
+}
+
+TEST_CASE("Cart: MBC5 RAM banking and battery save")
+{
+	const std::vector<u8> rom = make_rom(0x8000, 0x1B, 0x00, 0x04);
+	Cart cart;
+	REQUIRE(cart.load_cart(rom) == 0);
+	REQUIRE(cart.has_battery());
+
+	CHECK(cart.read(0xA000) == 0xFF);	// RAM disabled by default
+	cart.write(0x0000, 0x0A);
+	for(u8 bank = 0; bank < 16; bank++)
+	{
+		cart.write(0x4000, bank);
+		cart.write(0xA000, static_cast<u8>(0x10 + bank));
+		cart.write(0xBFFF, static_cast<u8>(0x20 + bank));
+	}
+
+	for(u8 bank = 0; bank < 16; bank++)
+	{
+		cart.write(0x4000, bank);
+		CHECK(cart.read(0xA000) == static_cast<u8>(0x10 + bank));
+		CHECK(cart.read(0xBFFF) == static_cast<u8>(0x20 + bank));
+	}
+
+	CHECK(cart.read_battery_ram().size() == 0x20000);
+	CHECK(cart.save_battery_ram(SAVE_PATH));
+
+	Cart loaded;
+	REQUIRE(loaded.load_cart(rom) == 0);
+	REQUIRE(loaded.has_battery());
+	CHECK(loaded.load_battery_ram(SAVE_PATH));
+	loaded.write(0x0000, 0x0A);
+	for(u8 bank = 0; bank < 16; bank++)
+	{
+		loaded.write(0x4000, bank);
+		CHECK(loaded.read(0xA000) == static_cast<u8>(0x10 + bank));
+		CHECK(loaded.read(0xBFFF) == static_cast<u8>(0x20 + bank));
+	}
+
+	std::filesystem::remove(SAVE_PATH);
+}
+
+TEST_CASE("Cart: MBC5 rumble bit does not select a RAM bank")
+{
+	const std::vector<u8> rumble_rom = make_rom(0x8000, 0x1E, 0x00, 0x03);
+	Cart rumble;
+	REQUIRE(rumble.load_cart(rumble_rom) == 0);
+	REQUIRE(rumble.has_battery());
+
+	rumble.write(0x0000, 0x0A);
+	rumble.write(0x4000, 0x00);
+	rumble.write(0xA000, 0x10);
+	rumble.write(0x4000, 0x01);
+	rumble.write(0xA000, 0x11);
+
+	rumble.write(0x4000, 0x08);	// rumble only: RAM bank 0
+	CHECK(rumble.read(0xA000) == 0x10);
+	rumble.write(0x4000, 0x09);	// rumble + RAM bank 1
+	CHECK(rumble.read(0xA000) == 0x11);
+
+	const std::vector<u8> plain_rom = make_rom(0x8000, 0x1B, 0x00, 0x04);
+	Cart plain;
+	REQUIRE(plain.load_cart(plain_rom) == 0);
+	plain.write(0x0000, 0x0A);
+	plain.write(0x4000, 0x08);
+	plain.write(0xA000, 0x88);
+
+	plain.write(0x4000, 0x00);
+	CHECK(plain.read(0xA000) != 0x88);
+	plain.write(0x4000, 0x08);
+	CHECK(plain.read(0xA000) == 0x88);	// non-rumble: bank 8
 }
 
 TEST_CASE("Cart: MBC3 RTC latch, seconds and halt")

@@ -1,7 +1,21 @@
 #include "timer.h"
 #include "QtreGB.h"
+#include "state_stream.h"
 
 using namespace qtreGB;
+
+namespace
+{
+
+// Component-local field tags. See documentation/Game Boy/savestate-core-format.md.
+constexpr u16 TIMER_DIV = 0x0001;
+constexpr u16 TIMER_TIMA = 0x0002;
+constexpr u16 TIMER_TMA = 0x0003;
+constexpr u16 TIMER_TAC = 0x0004;
+constexpr u16 TIMER_STATE = 0x0005;
+constexpr u16 TIMER_LAST_DIV_SIGNAL = 0x0006;
+
+} // namespace
 
 void Timer::set_interrupt_callback(InterruptCallback cb)
 {
@@ -77,14 +91,49 @@ void Timer::write_tac(u8 value)
 	on_falling_edge_inc_tima();
 }
 
-void Timer::serialize(TaggedSerializer& s)
+void Timer::save_state(StateWriter& writer) const
 {
-	s.process("div", m_div);
-	s.process("tima", m_tima);
-	s.process("tma", m_tma);
-	s.process("tac", m_tac);
-	s.process("timer_state", m_timer_state);
-	s.process("last_div_signal", m_last_div_signal);
+	writer.write_u16(TIMER_DIV, m_div);
+	writer.write_u8(TIMER_TIMA, m_tima);
+	writer.write_u8(TIMER_TMA, m_tma);
+	writer.write_u8(TIMER_TAC, m_tac);
+	writer.write_u8(TIMER_STATE, m_timer_state);
+	writer.write_bool(TIMER_LAST_DIV_SIGNAL, m_last_div_signal);
+}
+
+bool Timer::load_state(StateReader& reader)
+{
+	u16 div = 0;
+	u8 tima = 0;
+	u8 tma = 0;
+	u8 tac = 0;
+	u8 timer_state = 0;
+	bool last_div_signal = false;
+
+	if(!reader.read_u16(TIMER_DIV, div) ||
+	   !reader.read_u8(TIMER_TIMA, tima) ||
+	   !reader.read_u8(TIMER_TMA, tma) ||
+	   !reader.read_u8(TIMER_TAC, tac) ||
+	   !reader.read_u8(TIMER_STATE, timer_state) ||
+	   !reader.read_bool(TIMER_LAST_DIV_SIGNAL, last_div_signal))
+	{
+		return false;
+	}
+
+	// 0=None, 1=Reload, 2=Pending; TAC only stores its low three bits.
+	if(timer_state > 2 || tac > 0x07)
+	{
+		reader.mark_error(StateError::BadValue);
+		return false;
+	}
+
+	m_div = div;
+	m_tima = tima;
+	m_tma = tma;
+	m_tac = tac;
+	m_timer_state = timer_state;
+	m_last_div_signal = last_div_signal;
+	return true;
 }
 
 void Timer::set_div(u16 value)

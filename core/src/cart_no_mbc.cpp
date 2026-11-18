@@ -1,9 +1,15 @@
 #include "types.h"
 #include "cart_no_mbc.h"
+#include "state_stream.h"
 
 using namespace qtreGB;
 
 using namespace std;
+
+namespace
+{
+constexpr u16 CART_RAM = 0x0010;
+}
 
 NoMBCCart::NoMBCCart()
 {
@@ -57,4 +63,24 @@ void NoMBCCart::write(u16 address, u8 value)
 	{
 		m_ram[0].write(address - 0xA000, value);
 	}
+}
+
+void NoMBCCart::save_state(StateWriter& writer) const
+{
+	writer.write_bytes(CART_RAM, cart_ram_bytes(m_ram));
+}
+
+bool NoMBCCart::load_state(StateReader& reader)
+{
+	std::vector<u8> ram;
+	if(!reader.read_bytes(CART_RAM, ram))
+	{
+		return false;
+	}
+	if(!cart_ram_load(ram, m_ram))
+	{
+		reader.mark_error(StateError::BadLength);
+		return false;
+	}
+	return true;
 }

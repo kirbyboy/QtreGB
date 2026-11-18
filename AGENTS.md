@@ -6,9 +6,12 @@ pipeline (`CpuMicro`) and the PPU is the native dot-driven pipeline (`PPU`);
 both are the only implementations — there are no selection flags.
 
 ## Build & test
-- `make -j$(nproc)` → `build/QtreGB-GUI` (C++17, `-O0 -g`, `-Wall -Wextra -Wpedantic`).
-- `make run_tests` → doctest suite in `tests/` (156 cases, 787 assertions).
-- `make run_blargg` (15) · `make run_mts` (34).
+- `make -j$(nproc)` → `build/QtreGB-GUI` (C++17, `-O2 -g -flto`, `-Wall -Wextra -Wpedantic`).
+  Para un build sin optimizar: `make clean && make GUI_DEBUG=1`.
+  Para desactivar LTO: `make clean && make LTO_FLAGS=`.
+  Para la traza `CPUEVT` de desarrollo: `make clean && make QTR_IRQDBG=1`.
+- `make run_tests` → doctest suite in `tests/` (222 cases, 3987 assertions).
+- `make run_blargg` (15) · `make run_mts` (42).
 - PPU acceptance ROMs are **not** wired into `mts/Makefile`; run them manually:
   `./build/mts_runner vendor/mts/*/acceptance/ppu/*.gb` → 12/12.
 - PPU frame harness (needs the DMG boot ROM):
@@ -27,6 +30,15 @@ both are the only implementations — there are no selection flags.
    re-validation of the timing tests (`mts` + `blargg`).
 6. `sudo` is denied. ImageMagick is available at `/usr/bin/magick`.
 7. Match existing style: `inc/` + `src/` split, `m_` member prefix, class-per-file.
+
+## Licensing
+- Project code: **GPL-3.0-or-later**, full text in `LICENSE.txt`.
+- Project visual assets: CC0 1.0, see `assets/LICENSE`.
+- Name/logo/icon use: `TRADEMARK.md`.
+- Third-party notices: `THIRD_PARTY_NOTICES.md`.
+- `third_party/` is tracked; `lib/` is ignored. ImGuiFileDialog is vendored in
+  `third_party/ImGuiFileDialog` (MIT, with local i18n changes) but not wired
+  into the build yet.
 
 ## Architecture notes
 - `core/inc/cpu_micro.h` + `core/src/cpu_micro.cpp`: micro-op CPU (`CpuMicro`),
@@ -50,21 +62,61 @@ both are the only implementations — there are no selection flags.
   covers registers, channel state, DIV phase, resampler and HPF state (the PCM
   ring is deliberately excluded). A full machine savestate still needs the
   PPU/LCD/cart/DMA parts (see `documentation/Game Boy/apu-plan.md`).
-- `core/inc/cart.h` + MBC1/no-MBC/MBC2/MBC3 cartridges: battery-backed RAM is
-  saved to `<rom>.sav` next to the ROM. MBC2 uses 512 bytes (one nibble per
-  address) and can import 256-byte packed mGBA saves; MBC1/no-MBC save all RAM
-  banks raw. MBC3 supports 7-bit ROM banking, up to 32 KB RAM and a host-time
-  RTC (latch, halt, day carry); its save appends the VBA64 48-byte RTC block
-  after RAM. MBC30 is detected by an MBC3 RAM size of `$05` (64 KB) and uses
-  8-bit ROM banks and 8 RAM banks. `mbc3-tester`, `rtc3test`
+- `core/inc/cart.h` + MBC1/no-MBC/MBC2/MBC3/MBC5 cartridges: battery-backed
+  RAM is saved to `<rom>.sav` next to the ROM. MBC2 uses 512 bytes (one nibble
+  per address) and can import 256-byte packed mGBA saves; MBC1/no-MBC/MBC5
+  save all RAM banks raw. MBC3 supports 7-bit ROM banking, up to 32 KB RAM and
+  a host-time RTC (latch, halt, day carry); its save appends the VBA64 48-byte
+  RTC block after RAM. MBC30 is detected by an MBC3 RAM size of `$05` (64 KB)
+  and uses 8-bit ROM banks and 8 RAM banks. `mbc3-tester`, `rtc3test`
   (basic/range/sub-second) and Mealybug `mbc3_rtc` pass. MBC1 supports 1 MB+
-  secondary banking (bits 5-6) and MBC1M detection (secondary bits 4-5). The
-  GUI saves on ROM switch/reset/close and loads it when a battery cartridge
-  starts.
-- `gui/src/main.cpp`: time-based frame pacer. Emulation runs at the Game Boy
-  rate (70224 T-cycles per frame, 59.7275 Hz), independent of the monitor;
-  rendering is presented once per loop with SDL vsync so the image is not torn
-  and high-refresh monitors only repeat frames.
+  secondary banking (bits 5-6) and MBC1M detection (secondary bits 4-5). MBC5
+  supports 9-bit ROM banking (up to 8 MB), bank 0 at `$4000`, 4-bit RAM banking
+  (up to 128 KB), the rumble variants (`$1C-$1E`) and battery. The `mbc5`
+  mooneye ROM-size tests pass. The GUI saves on ROM switch/reset/close and
+  loads it when a battery cartridge starts.
+- `gui/src/app_config.cpp`: cross-platform config under the **Qtre**
+  ecosystem. Lookup order: `QTR_CONFIG` override, portable `QtreGB.ini` next
+  to the executable, then `Qtre/QtreGB/config.ini` (XDG_CONFIG_HOME on Linux;
+  `SDL_GetPrefPath("Qtre", "QtreGB")` on Windows/macOS). ImGui uses
+  `IniFilename = nullptr`; there is no `imgui.ini`. It stores window geometry,
+  the `[graphics]` options (palette, grid, ghosting, present mode, background),
+  `[audio]` (enabled, volume; defaults enabled at 50%) and the input model in
+  `[input]` / `[shortcuts]` (player devices, bindings, global shortcuts and the
+  opposite-directions flag).
+- `gui/src/display_processor.cpp`: native 160×144 palette/ghosting pass.
+  `DisplaySettings` exposes DMG, Pocket and custom palettes, integer scaling,
+  LCD-grid overlay and configurable ghosting. LCD grid is drawn in screen
+  space with ImGui, only when the effective scale is at least 2×; the GUI's
+  `Graphics` menu edits the settings and `QtreGB.ini` stores them under
+  `[graphics]`.
+- `gui/inc/input_settings.h` + `gui/src/input_settings.cpp`: input data model.
+  A player has one device (`None`, `Keyboard` or a controller GUID) and eight
+  Game Boy bindings. Controls are encoded as `key:<SDL scancode>`,
+  `button:<SDL gamecontroller button>` or `axis:<axis>:<+/-1>`. Global
+  shortcuts have one keyboard and one "any controller" slot. `sanitize()`
+  removes invalid/duplicate controls, forbids Ctrl/Alt/Esc/Backspace, and
+  makes shortcuts win over player bindings. Defaults: P1 keyboard (arrows,
+  Z/X, Enter/RightShift), P2 none, F/F5/F8 for fullscreen/save/load.
+- `gui/inc/input_manager.h` + `gui/src/input_manager.cpp`: SDL input backend.
+  Opens every connected GameController once (shared by both players), tracks
+  keyboard/controller state, hotplug, capture mode, edge-triggered shortcuts
+  and analog axes as buttons (60% press / 40% release hysteresis). It is shut
+  down before `SDL_Quit()`.
+- `gui/inc/input_directions.h` + `gui/src/input_directions.cpp`: resolves
+  opposite directions in the GUI. With the option off, the latest pressed
+  direction wins and releasing it restores the still-held one; simultaneous
+  presses tie-break Right over Left and Down over Up.
+- `Settings → Controllers` / `Settings → Key bindings`: scrollable ImGui
+  windows with per-row Bind/Clear controls and capture mode (Esc/Backspace
+  clears, Ctrl/Alt are rejected, Shift is allowed). Changing a player device
+  clears that player's bindings; assigning a shortcut removes conflicting
+  player bindings and warns.
+- `gui/src/main.cpp`: vsync-aware frame pacer. Emulation runs at the Game Boy
+  rate (70224 T-cycles per frame, 59.7275 Hz), independent of the monitor.
+  If SDL present actually blocks for the monitor refresh, the display drives
+  presentation; otherwise the loop sleeps to cap at 59.7275 Hz. Measured with
+  Kirby on a 60 Hz monitor: ~11% of one core (MegaBoy: ~24%).
 - `core/inc/QtreGB.h` + `core/src/QtreGB.cpp`: machine wiring (`Cpu = CpuMicro`,
   `PPU`).
 - The DocBoy PPU oracle was removed after reaching parity; it remains in Git

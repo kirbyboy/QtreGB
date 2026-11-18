@@ -1,10 +1,19 @@
 #include "bus.h"
 #include "apu.h"
 #include "QtreGB.h"
+#include "state_stream.h"
 
 #include <cstdlib>
 
 using namespace qtreGB;
+
+namespace
+{
+
+constexpr u16 BUS_BOOT_ROM_ENABLED = 0x0001;
+constexpr u16 BUS_BOOT_ROM_HASH = 0x0002;
+
+} // namespace
 
 Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Memory* hram, IO* io, LCD* lcd, PPU* ppu, APU* apu, ICPURegisters* cpu_registers)
 {
@@ -21,6 +30,39 @@ Bus::Bus(Cart* cart, Timer* timer, DMA* dma, Gamepad* gamepad, Memory* wram, Mem
 
 	m_cpu_registers = cpu_registers;
 
+}
+
+void Bus::save_state(StateWriter& writer) const
+{
+	writer.write_bool(BUS_BOOT_ROM_ENABLED, m_boot_rom_enabled);
+	writer.write_u64(BUS_BOOT_ROM_HASH,
+	                 state_hash_bytes(m_boot_rom.data(), m_boot_rom.size()));
+}
+
+bool Bus::load_state(StateReader& reader)
+{
+	bool enabled = false;
+	u64 hash = 0;
+	if(!reader.read_bool(BUS_BOOT_ROM_ENABLED, enabled) ||
+	   !reader.read_u64(BUS_BOOT_ROM_HASH, hash))
+	{
+		return false;
+	}
+
+	// The boot ROM content is host input, not part of the state. If the saved
+	// state needs it, the host must have loaded the same image.
+	if(enabled)
+	{
+		const u64 current = state_hash_bytes(m_boot_rom.data(), m_boot_rom.size());
+		if(current != hash)
+		{
+			reader.mark_error(StateError::BadValue);
+			return false;
+		}
+	}
+
+	m_boot_rom_enabled = enabled;
+	return true;
 }
 
 void Bus::set_boot_rom(const std::vector<u8>& rom)

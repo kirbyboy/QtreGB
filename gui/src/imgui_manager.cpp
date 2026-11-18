@@ -6,8 +6,12 @@ void ImGuiManager::init()
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
 
-	// Enable docking and other settings
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // keyboard navigation
+	// QtreGB keeps its settings in its own .ini, not in imgui.ini.
+	io.IniFilename = nullptr;
+
+	// Menus are mouse-only: the arrow keys belong to player 1. Do not enable
+	// ImGui keyboard/gamepad navigation.
+	io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;      // enable docking
 
 	ImGui::StyleColorsDark(); // default theme

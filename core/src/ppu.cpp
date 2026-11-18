@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include "state_stream.h"
 
 using namespace qtreGB;
 using namespace std;
@@ -13,6 +14,141 @@ constexpr u16 TILEMAP_WIDTH = 32;
 constexpr u16 TILEMAP_HEIGHT = 32;
 constexpr u16 TILEMAP_CELL_BYTES = 1;
 constexpr u16 TILE_DOUBLE_HEIGHT = 16;
+
+// Savestate tags. See documentation/Game Boy/savestate-core-format.md.
+constexpr u16 PPU_LCDC = 0x0001;
+constexpr u16 PPU_STAT = 0x0002;
+constexpr u16 PPU_MODE = 0x0003;
+constexpr u16 PPU_SCY = 0x0004;
+constexpr u16 PPU_SCX = 0x0005;
+constexpr u16 PPU_LY = 0x0006;
+constexpr u16 PPU_LYC = 0x0007;
+constexpr u16 PPU_DMA = 0x0008;
+constexpr u16 PPU_BGP = 0x0009;
+constexpr u16 PPU_OBP0 = 0x000A;
+constexpr u16 PPU_OBP1 = 0x000B;
+constexpr u16 PPU_WY = 0x000C;
+constexpr u16 PPU_WX = 0x000D;
+constexpr u16 PPU_TICK_SELECTOR = 0x000E;
+constexpr u16 PPU_FETCHER_SELECTOR = 0x000F;
+constexpr u16 PPU_DOTS = 0x0010;
+constexpr u16 PPU_LX = 0x0011;
+constexpr u16 PPU_LAST_STAT_IRQ = 0x0012;
+constexpr u16 PPU_ENABLE_LYC_IRQ = 0x0013;
+constexpr u16 PPU_PENDING_STAT_IRQ = 0x0014;
+constexpr u16 PPU_LAST_BGP = 0x0015;
+constexpr u16 PPU_LAST_WX = 0x0016;
+constexpr u16 PPU_LAST_LY = 0x0017;
+constexpr u16 PPU_LAST_LYC = 0x0018;
+constexpr u16 PPU_LAST_LCDC = 0x0019;
+constexpr u16 PPU_PENDING_STAT_COUNTDOWN = 0x001A;
+constexpr u16 PPU_PENDING_STAT_VALUE = 0x001B;
+constexpr u16 PPU_GLITCH_LINE0 = 0x001C;
+constexpr u16 PPU_GLITCH_LINE0_DELAY = 0x001D;
+constexpr u16 PPU_VBLANK_GLITCH = 0x001E;
+constexpr u16 PPU_OAM_COUNT = 0x0020;
+constexpr u16 PPU_OAM_INDEX = 0x0021;
+constexpr u16 PPU_OAM_REQUEST = 0x0022;
+constexpr u16 PPU_OAM_REG_Y = 0x0023;
+constexpr u16 PPU_OAM_REG_X = 0x0024;
+constexpr u16 PPU_OAM_REG_TILE = 0x0025;
+constexpr u16 PPU_OAM_REG_FLAGS = 0x0026;
+constexpr u16 PPU_W_ACTIVE_FRAME = 0x0030;
+constexpr u16 PPU_W_WLY = 0x0031;
+constexpr u16 PPU_W_ACTIVATING = 0x0032;
+constexpr u16 PPU_W_ACTIVE = 0x0033;
+constexpr u16 PPU_W_JUST_ACTIVATED = 0x0034;
+constexpr u16 PPU_WF_TILEMAP_X = 0x0035;
+constexpr u16 PPU_INITIAL_SCX_DISCARD = 0x0036;
+constexpr u16 PPU_INITIAL_SCX_DISCARDED = 0x0037;
+constexpr u16 PPU_BWF_LX = 0x0038;
+constexpr u16 PPU_BWF_TILEMAP_ADDR = 0x0039;
+constexpr u16 PPU_BWF_TILE_NUMBER = 0x003A;
+constexpr u16 PPU_BWF_INTERRUPTED_HAS_DATA = 0x003B;
+constexpr u16 PPU_BWF_INTERRUPTED_LOW = 0x003C;
+constexpr u16 PPU_BWF_INTERRUPTED_HIGH = 0x003D;
+constexpr u16 PPU_OF_ENTRY_NUMBER = 0x0042;
+constexpr u16 PPU_OF_ENTRY_Y = 0x003E;
+constexpr u16 PPU_OF_ENTRY_X = 0x003F;
+constexpr u16 PPU_OF_TILE_NUMBER = 0x0040;
+constexpr u16 PPU_OF_ATTRIBUTES = 0x0041;
+constexpr u16 PPU_PSF_TILE_ADDR = 0x0044;
+constexpr u16 PPU_PSF_LOW = 0x0045;
+constexpr u16 PPU_PSF_HIGH = 0x0046;
+constexpr u16 PPU_PUSH_ENABLED = 0x0047;
+constexpr u16 PPU_PENDING_BG_FILL = 0x0048;
+constexpr u16 PPU_FETCHING_SPRITE = 0x0049;
+constexpr u16 PPU_BG_FIFO = 0x0050;
+constexpr u16 PPU_OBJ_FIFO = 0x0051;
+constexpr u16 PPU_OAM_LISTS = 0x0052;
+constexpr u16 PPU_VRAM = 0x0060;
+constexpr u16 PPU_OAM_RAM = 0x0061;
+constexpr u16 PPU_OAM_BUS_READ = 0x0062;
+constexpr u16 PPU_OAM_BUS_WRITE = 0x0063;
+constexpr u16 PPU_VRAM_BUS_READ = 0x0064;
+constexpr u16 PPU_VRAM_BUS_WRITE = 0x0065;
+
+enum TickSelectorId : u8
+{
+	TS_OAM_SCAN_EVEN = 1,
+	TS_OAM_SCAN_ODD,
+	TS_OAM_SCAN_77,
+	TS_OAM_SCAN_DONE,
+	TS_OAM_SCAN_AFTER_TURN_ON,
+	TS_OAM_SCAN_AFTER_TURN_ON_78,
+	TS_OAM_SCAN_AFTER_TURN_ON_79,
+	TS_PIXEL_TRANSFER_DUMMY_LX0,
+	TS_PIXEL_TRANSFER_DISCARD_LX0,
+	TS_PIXEL_TRANSFER_DISCARD_LX0_WX0_SCX,
+	TS_PIXEL_TRANSFER_LX0,
+	TS_PIXEL_TRANSFER_LX8,
+	TS_HBLANK,
+	TS_HBLANK_452,
+	TS_HBLANK_453,
+	TS_HBLANK_454,
+	TS_HBLANK_455,
+	TS_HBLANK_LAST_LINE,
+	TS_HBLANK_LAST_LINE_453,
+	TS_HBLANK_LAST_LINE_454,
+	TS_HBLANK_LAST_LINE_455,
+	TS_HBLANK_FIRST_LINE_AFTER_TURN_ON,
+	TS_VBLANK,
+	TS_VBLANK_453,
+	TS_VBLANK_454,
+	TS_VBLANK_455,
+	TS_VBLANK_LAST_LINE,
+	TS_VBLANK_LAST_LINE_2,
+	TS_VBLANK_LAST_LINE_3,
+	TS_VBLANK_LAST_LINE_4,
+	TS_VBLANK_LAST_LINE_7,
+	TS_VBLANK_LAST_LINE_453,
+	TS_VBLANK_LAST_LINE_454,
+	TS_VBLANK_LAST_LINE_455,
+};
+
+enum FetcherSelectorId : u8
+{
+	FS_PIXEL_SLICE_FETCHER_IDLE = 1,
+	FS_BGWIN_PREFETCHER_GET_TILE_0,
+	FS_BG_PREFETCHER_GET_TILE_0,
+	FS_BG_PREFETCHER_GET_TILE_1,
+	FS_BG_PIXEL_SLICE_GET_TILE_DATA_LOW_0,
+	FS_BG_PIXEL_SLICE_GET_TILE_DATA_LOW_1,
+	FS_BG_PIXEL_SLICE_GET_TILE_DATA_HIGH_0,
+	FS_BG_PIXEL_SLICE_GET_TILE_DATA_HIGH_1,
+	FS_WIN_PREFETCHER_GET_TILE_1,
+	FS_WIN_PIXEL_SLICE_GET_TILE_DATA_LOW_0,
+	FS_WIN_PIXEL_SLICE_GET_TILE_DATA_LOW_1,
+	FS_WIN_PIXEL_SLICE_GET_TILE_DATA_HIGH_0,
+	FS_WIN_PIXEL_SLICE_GET_TILE_DATA_HIGH_1,
+	FS_OBJ_PREFETCHER_GET_TILE_0,
+	FS_OBJ_PREFETCHER_GET_TILE_1,
+	FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_LOW_0,
+	FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_LOW_1,
+	FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_HIGH_0,
+	FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_HIGH_1_AND_MERGE,
+};
+
 } // namespace
 
 const int PPU::LINES_PER_FRAME = 154;
@@ -64,7 +200,8 @@ void PPU::ppu_tick()
 
 	tick_pending_write();
 	tick_stat();
-	sync_lcd_from_ppu();
+	// The passive LCD mirror is synchronized on demand (savestate, tests),
+	// not on every dot: the CPU reads the PPU registers directly.
 }
 
 // ------- PPU helpers -------
@@ -1615,6 +1752,10 @@ void PPU::write_stat(u8 value)
 
 u8 PPU::ppu_oam_read(u16 address)
 {
+	if(address >= 0xA0)
+	{
+		return 0xFF;
+	}
 	switch(address % 4)
 	{
 		case 0: return m_oam_ram[address / 4].m_y;
@@ -1632,6 +1773,10 @@ void PPU::ppu_oam_write(u16 address, u8 value)
 
 void PPU::ppu_oam_write_dma(u16 address, u8 value)
 {
+	if(address >= 0xA0)
+	{
+		return;
+	}
 	switch(address % 4)
 	{
 		case 0: m_oam_ram[address / 4].m_y = value; break;
@@ -1665,7 +1810,7 @@ void PPU::push_pixel(u8 color)
 	}
 }
 
-void PPU::sync_lcd_from_ppu()
+void PPU::sync_lcd_from_ppu() const
 {
 	m_lcd->m_ly = m_ly;
 	m_lcd->m_lyc = m_lyc;
@@ -1778,3 +1923,573 @@ void PPU::reset()
 	m_oam_bus.acquire(VideoDevice::Ppu, VideoAccess::Write);
 }
 
+
+// ------- Savestate: selector registries -------
+
+const PPU::TickSelectorEntry* PPU::tick_selector_table(size_t& count)
+{
+	static const TickSelectorEntry table[] = {
+		{TS_OAM_SCAN_EVEN, &PPU::oam_scan_even},
+		{TS_OAM_SCAN_ODD, &PPU::oam_scan_odd},
+		{TS_OAM_SCAN_77, &PPU::oam_scan_77},
+		{TS_OAM_SCAN_DONE, &PPU::oam_scan_done},
+		{TS_OAM_SCAN_AFTER_TURN_ON, &PPU::oam_scan_after_turn_on},
+		{TS_OAM_SCAN_AFTER_TURN_ON_78, &PPU::oam_scan_after_turn_on_78},
+		{TS_OAM_SCAN_AFTER_TURN_ON_79, &PPU::oam_scan_after_turn_on_79},
+		{TS_PIXEL_TRANSFER_DUMMY_LX0, &PPU::pixel_transfer_dummy_lx0},
+		{TS_PIXEL_TRANSFER_DISCARD_LX0, &PPU::pixel_transfer_discard_lx0},
+		{TS_PIXEL_TRANSFER_DISCARD_LX0_WX0_SCX, &PPU::pixel_transfer_discard_lx0_wx0_scx},
+		{TS_PIXEL_TRANSFER_LX0, &PPU::pixel_transfer_lx0},
+		{TS_PIXEL_TRANSFER_LX8, &PPU::pixel_transfer_lx8},
+		{TS_HBLANK, &PPU::hblank},
+		{TS_HBLANK_452, &PPU::hblank_452},
+		{TS_HBLANK_453, &PPU::hblank_453},
+		{TS_HBLANK_454, &PPU::hblank_454},
+		{TS_HBLANK_455, &PPU::hblank_455},
+		{TS_HBLANK_LAST_LINE, &PPU::hblank_last_line},
+		{TS_HBLANK_LAST_LINE_453, &PPU::hblank_last_line_453},
+		{TS_HBLANK_LAST_LINE_454, &PPU::hblank_last_line_454},
+		{TS_HBLANK_LAST_LINE_455, &PPU::hblank_last_line_455},
+		{TS_HBLANK_FIRST_LINE_AFTER_TURN_ON, &PPU::hblank_first_line_after_turn_on},
+		{TS_VBLANK, &PPU::vblank},
+		{TS_VBLANK_453, &PPU::vblank_453},
+		{TS_VBLANK_454, &PPU::vblank_454},
+		{TS_VBLANK_455, &PPU::vblank_455},
+		{TS_VBLANK_LAST_LINE, &PPU::vblank_last_line},
+		{TS_VBLANK_LAST_LINE_2, &PPU::vblank_last_line_2},
+		{TS_VBLANK_LAST_LINE_3, &PPU::vblank_last_line_3},
+		{TS_VBLANK_LAST_LINE_4, &PPU::vblank_last_line_4},
+		{TS_VBLANK_LAST_LINE_7, &PPU::vblank_last_line_7},
+		{TS_VBLANK_LAST_LINE_453, &PPU::vblank_last_line_453},
+		{TS_VBLANK_LAST_LINE_454, &PPU::vblank_last_line_454},
+		{TS_VBLANK_LAST_LINE_455, &PPU::vblank_last_line_455},
+	};
+	count = sizeof(table) / sizeof(table[0]);
+	return table;
+}
+
+const PPU::FetcherSelectorEntry* PPU::fetcher_selector_table(size_t& count)
+{
+	static const FetcherSelectorEntry table[] = {
+		{FS_PIXEL_SLICE_FETCHER_IDLE, &PPU::pixel_slice_fetcher_idle},
+		{FS_BGWIN_PREFETCHER_GET_TILE_0, &PPU::bgwin_prefetcher_get_tile_0},
+		{FS_BG_PREFETCHER_GET_TILE_0, &PPU::bg_prefetcher_get_tile_0},
+		{FS_BG_PREFETCHER_GET_TILE_1, &PPU::bg_prefetcher_get_tile_1},
+		{FS_BG_PIXEL_SLICE_GET_TILE_DATA_LOW_0, &PPU::bg_pixel_slice_fetcher_get_tile_data_low_0},
+		{FS_BG_PIXEL_SLICE_GET_TILE_DATA_LOW_1, &PPU::bg_pixel_slice_fetcher_get_tile_data_low_1},
+		{FS_BG_PIXEL_SLICE_GET_TILE_DATA_HIGH_0, &PPU::bg_pixel_slice_fetcher_get_tile_data_high_0},
+		{FS_BG_PIXEL_SLICE_GET_TILE_DATA_HIGH_1, &PPU::bg_pixel_slice_fetcher_get_tile_data_high_1},
+		{FS_WIN_PREFETCHER_GET_TILE_1, &PPU::win_prefetcher_get_tile_1},
+		{FS_WIN_PIXEL_SLICE_GET_TILE_DATA_LOW_0, &PPU::win_pixel_slice_fetcher_get_tile_data_low_0},
+		{FS_WIN_PIXEL_SLICE_GET_TILE_DATA_LOW_1, &PPU::win_pixel_slice_fetcher_get_tile_data_low_1},
+		{FS_WIN_PIXEL_SLICE_GET_TILE_DATA_HIGH_0, &PPU::win_pixel_slice_fetcher_get_tile_data_high_0},
+		{FS_WIN_PIXEL_SLICE_GET_TILE_DATA_HIGH_1, &PPU::win_pixel_slice_fetcher_get_tile_data_high_1},
+		{FS_OBJ_PREFETCHER_GET_TILE_0, &PPU::obj_prefetcher_get_tile_0},
+		{FS_OBJ_PREFETCHER_GET_TILE_1, &PPU::obj_prefetcher_get_tile_1},
+		{FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_LOW_0, &PPU::obj_pixel_slice_fetcher_get_tile_data_low_0},
+		{FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_LOW_1, &PPU::obj_pixel_slice_fetcher_get_tile_data_low_1},
+		{FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_HIGH_0, &PPU::obj_pixel_slice_fetcher_get_tile_data_high_0},
+		{FS_OBJ_PIXEL_SLICE_GET_TILE_DATA_HIGH_1_AND_MERGE, &PPU::obj_pixel_slice_fetcher_get_tile_data_high_1_and_merge_with_obj_fifo},
+	};
+	count = sizeof(table) / sizeof(table[0]);
+	return table;
+}
+
+u8 PPU::tick_selector_id(TickSelector fn)
+{
+	size_t count = 0;
+	const TickSelectorEntry* table = tick_selector_table(count);
+	for(size_t i = 0; i < count; ++i)
+	{
+		if(table[i].fn == fn)
+		{
+			return table[i].id;
+		}
+	}
+	return 0;
+}
+
+u8 PPU::fetcher_selector_id(FetcherTickSelector fn)
+{
+	size_t count = 0;
+	const FetcherSelectorEntry* table = fetcher_selector_table(count);
+	for(size_t i = 0; i < count; ++i)
+	{
+		if(table[i].fn == fn)
+		{
+			return table[i].id;
+		}
+	}
+	return 0;
+}
+
+bool PPU::tick_selector_from_id(u8 id, TickSelector& fn)
+{
+	size_t count = 0;
+	const TickSelectorEntry* table = tick_selector_table(count);
+	for(size_t i = 0; i < count; ++i)
+	{
+		if(table[i].id == id)
+		{
+			fn = table[i].fn;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool PPU::fetcher_selector_from_id(u8 id, FetcherTickSelector& fn)
+{
+	size_t count = 0;
+	const FetcherSelectorEntry* table = fetcher_selector_table(count);
+	for(size_t i = 0; i < count; ++i)
+	{
+		if(table[i].id == id)
+		{
+			fn = table[i].fn;
+			return true;
+		}
+	}
+	return false;
+}
+
+// ------- Savestate: packing helpers -------
+
+u8 PPU::pack_lcdc(const Lcdc& value)
+{
+	return static_cast<u8>((value.enable ? 0x80 : 0x00) |
+	                       (value.win_tile_map ? 0x40 : 0x00) |
+	                       (value.win_enable ? 0x20 : 0x00) |
+	                       (value.bg_win_tile_data ? 0x10 : 0x00) |
+	                       (value.bg_tile_map ? 0x08 : 0x00) |
+	                       (value.obj_size ? 0x04 : 0x00) |
+	                       (value.obj_enable ? 0x02 : 0x00) |
+	                       (value.bg_win_enable ? 0x01 : 0x00));
+}
+
+void PPU::unpack_lcdc(u8 value, Lcdc& out)
+{
+	out.enable = (value & 0x80) != 0;
+	out.win_tile_map = (value & 0x40) != 0;
+	out.win_enable = (value & 0x20) != 0;
+	out.bg_win_tile_data = (value & 0x10) != 0;
+	out.bg_tile_map = (value & 0x08) != 0;
+	out.obj_size = (value & 0x04) != 0;
+	out.obj_enable = (value & 0x02) != 0;
+	out.bg_win_enable = (value & 0x01) != 0;
+}
+
+std::vector<u8> PPU::pack_oam_entries(const std::array<SpriteList, 168>& lists)
+{
+	std::vector<u8> out;
+	out.reserve(lists.size() * 8);
+	for(const SpriteList& list : lists)
+	{
+		const u8 count = list.count > list.entries.size() ?
+			static_cast<u8>(list.entries.size()) : list.count;
+		out.push_back(count);
+		for(u8 i = 0; i < count; ++i)
+		{
+			out.push_back(list.entries[i].number);
+			out.push_back(list.entries[i].y);
+			out.push_back(list.entries[i].x);
+		}
+	}
+	return out;
+}
+
+bool PPU::unpack_oam_entries(const std::vector<u8>& data,
+                             std::array<SpriteList, 168>& lists)
+{
+	size_t pos = 0;
+	for(SpriteList& list : lists)
+	{
+		list.clear();
+		if(pos >= data.size())
+		{
+			return false;
+		}
+		const u8 count = data[pos++];
+		if(count > list.entries.size())
+		{
+			return false;
+		}
+		for(u8 i = 0; i < count; ++i)
+		{
+			if(pos + 3 > data.size())
+			{
+				return false;
+			}
+			OamScanEntry entry;
+			entry.number = data[pos++];
+			entry.y = data[pos++];
+			entry.x = data[pos++];
+			if(entry.number >= 40 || entry.x >= 168)
+			{
+				return false;
+			}
+			list.push(entry);
+		}
+	}
+	return pos == data.size();
+}
+
+std::vector<u8> PPU::pack_bg_fifo(const std::deque<BgPixel>& fifo)
+{
+	std::vector<u8> out;
+	out.reserve(fifo.size());
+	for(const BgPixel& pixel : fifo)
+	{
+		out.push_back(pixel.color_index);
+	}
+	return out;
+}
+
+bool PPU::unpack_bg_fifo(const std::vector<u8>& data, std::deque<BgPixel>& fifo)
+{
+	if(data.size() > 256)
+	{
+		return false;
+	}
+	fifo.clear();
+	for(const u8 color : data)
+	{
+		if(color > 3)
+		{
+			return false;
+		}
+		fifo.push_back(BgPixel {color});
+	}
+	return true;
+}
+
+std::vector<u8> PPU::pack_obj_fifo(const std::deque<ObjPixel>& fifo)
+{
+	std::vector<u8> out;
+	out.reserve(fifo.size() * 4);
+	for(const ObjPixel& pixel : fifo)
+	{
+		out.push_back(pixel.color_index);
+		out.push_back(pixel.attributes);
+		out.push_back(pixel.number);
+		out.push_back(pixel.x);
+	}
+	return out;
+}
+
+bool PPU::unpack_obj_fifo(const std::vector<u8>& data, std::deque<ObjPixel>& fifo)
+{
+	if(data.size() % 4 != 0 || data.size() / 4 > 64)
+	{
+		return false;
+	}
+	fifo.clear();
+	for(size_t i = 0; i < data.size(); i += 4)
+	{
+		ObjPixel pixel;
+		pixel.color_index = data[i];
+		pixel.attributes = data[i + 1];
+		pixel.number = data[i + 2];
+		pixel.x = data[i + 3];
+		if(pixel.color_index > 3)
+		{
+			return false;
+		}
+		fifo.push_back(pixel);
+	}
+	return true;
+}
+
+// ------- Savestate -------
+
+void PPU::save_state(StateWriter& writer) const
+{
+	// The LCD chunk is written after the PPU chunk; refresh the passive
+	// mirror first so both describe the same dot.
+	sync_lcd_from_ppu();
+
+	const u8 tick_id = tick_selector_id(m_tick_selector);
+	const u8 fetcher_id = fetcher_selector_id(m_fetcher_tick_selector);
+	if(tick_id == 0 || fetcher_id == 0)
+	{
+		writer.mark_error(StateError::WriterMisuse);
+		return;
+	}
+
+	writer.write_u8(PPU_LCDC, pack_lcdc(m_lcdc));
+	writer.write_u8(PPU_STAT, read_stat());
+	writer.write_u8(PPU_MODE, static_cast<u8>(m_mode));
+	writer.write_u8(PPU_SCY, m_scy);
+	writer.write_u8(PPU_SCX, m_scx);
+	writer.write_u8(PPU_LY, m_ly);
+	writer.write_u8(PPU_LYC, m_lyc);
+	writer.write_u8(PPU_DMA, m_dma);
+	writer.write_u8(PPU_BGP, m_bgp);
+	writer.write_u8(PPU_OBP0, m_obp0);
+	writer.write_u8(PPU_OBP1, m_obp1);
+	writer.write_u8(PPU_WY, m_wy);
+	writer.write_u8(PPU_WX, m_wx);
+	writer.write_u8(PPU_TICK_SELECTOR, tick_id);
+	writer.write_u8(PPU_FETCHER_SELECTOR, fetcher_id);
+	writer.write_u16(PPU_DOTS, m_dots);
+	writer.write_u8(PPU_LX, m_lx);
+
+	writer.write_bool(PPU_LAST_STAT_IRQ, m_last_stat_irq);
+	writer.write_bool(PPU_ENABLE_LYC_IRQ, m_enable_lyc_eq_ly_irq);
+	writer.write_bool(PPU_PENDING_STAT_IRQ, m_pending_stat_irq);
+	writer.write_u8(PPU_LAST_BGP, m_last_bgp);
+	writer.write_u8(PPU_LAST_WX, m_last_wx);
+	writer.write_u8(PPU_LAST_LY, m_last_ly);
+	writer.write_u8(PPU_LAST_LYC, m_last_lyc);
+	writer.write_u8(PPU_LAST_LCDC, pack_lcdc(m_last_lcdc));
+	writer.write_u8(PPU_PENDING_STAT_COUNTDOWN, m_pending_stat.countdown);
+	writer.write_u8(PPU_PENDING_STAT_VALUE, m_pending_stat.value);
+	writer.write_bool(PPU_GLITCH_LINE0, m_is_glitched_line_0);
+	writer.write_u8(PPU_GLITCH_LINE0_DELAY, m_glitched_line_0_hblank_delay);
+	writer.write_bool(PPU_VBLANK_GLITCH, m_vblank_last_line_stat_mode_hblank_glitch);
+
+	writer.write_u8(PPU_OAM_COUNT, m_oam_scan.count);
+	writer.write_u8(PPU_OAM_INDEX, m_oam_scan.index);
+	writer.write_u8(PPU_OAM_REQUEST, m_oam_scan.request);
+	writer.write_u8(PPU_OAM_REG_Y, m_oam_scan_registers.m_y);
+	writer.write_u8(PPU_OAM_REG_X, m_oam_scan_registers.m_x);
+	writer.write_u8(PPU_OAM_REG_TILE, m_oam_scan_registers.m_tile);
+	writer.write_u8(PPU_OAM_REG_FLAGS, m_oam_scan_registers.m_flags);
+
+	writer.write_bool(PPU_W_ACTIVE_FRAME, m_w_active_for_frame);
+	writer.write_u8(PPU_W_WLY, m_w_wly);
+	writer.write_bool(PPU_W_ACTIVATING, m_w_activating);
+	writer.write_bool(PPU_W_ACTIVE, m_w_active);
+	writer.write_bool(PPU_W_JUST_ACTIVATED, m_w_just_activated);
+	writer.write_u8(PPU_WF_TILEMAP_X, m_wf_tilemap_x);
+	writer.write_u8(PPU_INITIAL_SCX_DISCARD, m_initial_scx.to_discard);
+	writer.write_u8(PPU_INITIAL_SCX_DISCARDED, m_initial_scx.discarded);
+
+	writer.write_u16(PPU_BWF_LX, m_bwf.lx);
+	writer.write_u16(PPU_BWF_TILEMAP_ADDR, m_bwf.tilemap_tile_vram_addr);
+	writer.write_u8(PPU_BWF_TILE_NUMBER, m_bwf.tile_number);
+	writer.write_bool(PPU_BWF_INTERRUPTED_HAS_DATA, m_bwf.interrupted_fetch_has_data);
+	writer.write_u8(PPU_BWF_INTERRUPTED_LOW, m_bwf.interrupted_tile_data_low);
+	writer.write_u8(PPU_BWF_INTERRUPTED_HIGH, m_bwf.interrupted_tile_data_high);
+
+	writer.write_u8(PPU_OF_ENTRY_NUMBER, m_of.entry.number);
+	writer.write_u8(PPU_OF_ENTRY_Y, m_of.entry.y);
+	writer.write_u8(PPU_OF_ENTRY_X, m_of.entry.x);
+	writer.write_u8(PPU_OF_TILE_NUMBER, m_of.tile_number);
+	writer.write_u8(PPU_OF_ATTRIBUTES, m_of.attributes);
+
+	writer.write_u16(PPU_PSF_TILE_ADDR, m_psf.tile_data_vram_address);
+	writer.write_u8(PPU_PSF_LOW, m_psf.tile_data_low);
+	writer.write_u8(PPU_PSF_HIGH, m_psf.tile_data_high);
+	writer.write_bool(PPU_PUSH_ENABLED, m_pixel_slice_fetcher_push_enabled);
+	writer.write_bool(PPU_PENDING_BG_FILL, m_pending_bg_fifo_fill);
+	writer.write_bool(PPU_FETCHING_SPRITE, m_fetching_sprite);
+
+	writer.write_bytes(PPU_BG_FIFO, pack_bg_fifo(m_bg_fifo));
+	writer.write_bytes(PPU_OBJ_FIFO, pack_obj_fifo(m_obj_fifo));
+	writer.write_bytes(PPU_OAM_LISTS, pack_oam_entries(m_oam_entries));
+
+	writer.write_bytes(PPU_VRAM, m_vram.data());
+
+	std::vector<u8> oam;
+	oam.reserve(m_oam_ram.size() * 4);
+	for(const OAMEntry& entry : m_oam_ram)
+	{
+		oam.push_back(entry.m_y);
+		oam.push_back(entry.m_x);
+		oam.push_back(entry.m_tile);
+		oam.push_back(entry.m_flags);
+	}
+	writer.write_bytes(PPU_OAM_RAM, oam);
+
+	writer.write_bool(PPU_OAM_BUS_READ, is_oam_read_locked());
+	writer.write_bool(PPU_OAM_BUS_WRITE, is_oam_write_locked());
+	writer.write_bool(PPU_VRAM_BUS_READ, is_vram_read_locked());
+	writer.write_bool(PPU_VRAM_BUS_WRITE, is_vram_write_locked());
+}
+
+bool PPU::load_state(StateReader& reader)
+{
+	const PPU snapshot = *this;
+	const auto fail = [&]()
+	{
+		*this = snapshot;
+		return false;
+	};
+
+	u8 lcdc_bits = 0;
+	u8 stat_bits = 0;
+	u8 mode = 0;
+	u8 tick_id = 0;
+	u8 fetcher_id = 0;
+	u8 last_lcdc_bits = 0;
+	bool oam_read = false;
+	bool oam_write = false;
+	bool vram_read = false;
+	bool vram_write = false;
+	std::vector<u8> bg_fifo_bytes;
+	std::vector<u8> obj_fifo_bytes;
+	std::vector<u8> oam_list_bytes;
+	std::vector<u8> vram_bytes;
+	std::vector<u8> oam_bytes;
+
+	if(!reader.read_u8(PPU_LCDC, lcdc_bits) ||
+	   !reader.read_u8(PPU_STAT, stat_bits) ||
+	   !reader.read_u8(PPU_MODE, mode) ||
+	   !reader.read_u8(PPU_SCY, m_scy) ||
+	   !reader.read_u8(PPU_SCX, m_scx) ||
+	   !reader.read_u8(PPU_LY, m_ly) ||
+	   !reader.read_u8(PPU_LYC, m_lyc) ||
+	   !reader.read_u8(PPU_DMA, m_dma) ||
+	   !reader.read_u8(PPU_BGP, m_bgp) ||
+	   !reader.read_u8(PPU_OBP0, m_obp0) ||
+	   !reader.read_u8(PPU_OBP1, m_obp1) ||
+	   !reader.read_u8(PPU_WY, m_wy) ||
+	   !reader.read_u8(PPU_WX, m_wx) ||
+	   !reader.read_u8(PPU_TICK_SELECTOR, tick_id) ||
+	   !reader.read_u8(PPU_FETCHER_SELECTOR, fetcher_id) ||
+	   !reader.read_u16(PPU_DOTS, m_dots) ||
+	   !reader.read_u8(PPU_LX, m_lx) ||
+	   !reader.read_bool(PPU_LAST_STAT_IRQ, m_last_stat_irq) ||
+	   !reader.read_bool(PPU_ENABLE_LYC_IRQ, m_enable_lyc_eq_ly_irq) ||
+	   !reader.read_bool(PPU_PENDING_STAT_IRQ, m_pending_stat_irq) ||
+	   !reader.read_u8(PPU_LAST_BGP, m_last_bgp) ||
+	   !reader.read_u8(PPU_LAST_WX, m_last_wx) ||
+	   !reader.read_u8(PPU_LAST_LY, m_last_ly) ||
+	   !reader.read_u8(PPU_LAST_LYC, m_last_lyc) ||
+	   !reader.read_u8(PPU_LAST_LCDC, last_lcdc_bits) ||
+	   !reader.read_u8(PPU_PENDING_STAT_COUNTDOWN, m_pending_stat.countdown) ||
+	   !reader.read_u8(PPU_PENDING_STAT_VALUE, m_pending_stat.value) ||
+	   !reader.read_bool(PPU_GLITCH_LINE0, m_is_glitched_line_0) ||
+	   !reader.read_u8(PPU_GLITCH_LINE0_DELAY, m_glitched_line_0_hblank_delay) ||
+	   !reader.read_bool(PPU_VBLANK_GLITCH, m_vblank_last_line_stat_mode_hblank_glitch) ||
+	   !reader.read_u8(PPU_OAM_COUNT, m_oam_scan.count) ||
+	   !reader.read_u8(PPU_OAM_INDEX, m_oam_scan.index) ||
+	   !reader.read_u8(PPU_OAM_REQUEST, m_oam_scan.request) ||
+	   !reader.read_u8(PPU_OAM_REG_Y, m_oam_scan_registers.m_y) ||
+	   !reader.read_u8(PPU_OAM_REG_X, m_oam_scan_registers.m_x) ||
+	   !reader.read_u8(PPU_OAM_REG_TILE, m_oam_scan_registers.m_tile) ||
+	   !reader.read_u8(PPU_OAM_REG_FLAGS, m_oam_scan_registers.m_flags) ||
+	   !reader.read_bool(PPU_W_ACTIVE_FRAME, m_w_active_for_frame) ||
+	   !reader.read_u8(PPU_W_WLY, m_w_wly) ||
+	   !reader.read_bool(PPU_W_ACTIVATING, m_w_activating) ||
+	   !reader.read_bool(PPU_W_ACTIVE, m_w_active) ||
+	   !reader.read_bool(PPU_W_JUST_ACTIVATED, m_w_just_activated) ||
+	   !reader.read_u8(PPU_WF_TILEMAP_X, m_wf_tilemap_x) ||
+	   !reader.read_u8(PPU_INITIAL_SCX_DISCARD, m_initial_scx.to_discard) ||
+	   !reader.read_u8(PPU_INITIAL_SCX_DISCARDED, m_initial_scx.discarded) ||
+	   !reader.read_u16(PPU_BWF_LX, m_bwf.lx) ||
+	   !reader.read_u16(PPU_BWF_TILEMAP_ADDR, m_bwf.tilemap_tile_vram_addr) ||
+	   !reader.read_u8(PPU_BWF_TILE_NUMBER, m_bwf.tile_number) ||
+	   !reader.read_bool(PPU_BWF_INTERRUPTED_HAS_DATA, m_bwf.interrupted_fetch_has_data) ||
+	   !reader.read_u8(PPU_BWF_INTERRUPTED_LOW, m_bwf.interrupted_tile_data_low) ||
+	   !reader.read_u8(PPU_BWF_INTERRUPTED_HIGH, m_bwf.interrupted_tile_data_high) ||
+	   !reader.read_u8(PPU_OF_ENTRY_NUMBER, m_of.entry.number) ||
+	   !reader.read_u8(PPU_OF_ENTRY_Y, m_of.entry.y) ||
+	   !reader.read_u8(PPU_OF_ENTRY_X, m_of.entry.x) ||
+	   !reader.read_u8(PPU_OF_TILE_NUMBER, m_of.tile_number) ||
+	   !reader.read_u8(PPU_OF_ATTRIBUTES, m_of.attributes) ||
+	   !reader.read_u16(PPU_PSF_TILE_ADDR, m_psf.tile_data_vram_address) ||
+	   !reader.read_u8(PPU_PSF_LOW, m_psf.tile_data_low) ||
+	   !reader.read_u8(PPU_PSF_HIGH, m_psf.tile_data_high) ||
+	   !reader.read_bool(PPU_PUSH_ENABLED, m_pixel_slice_fetcher_push_enabled) ||
+	   !reader.read_bool(PPU_PENDING_BG_FILL, m_pending_bg_fifo_fill) ||
+	   !reader.read_bool(PPU_FETCHING_SPRITE, m_fetching_sprite) ||
+	   !reader.read_bytes(PPU_BG_FIFO, bg_fifo_bytes) ||
+	   !reader.read_bytes(PPU_OBJ_FIFO, obj_fifo_bytes) ||
+	   !reader.read_bytes(PPU_OAM_LISTS, oam_list_bytes) ||
+	   !reader.read_bytes(PPU_VRAM, vram_bytes) ||
+	   !reader.read_bytes(PPU_OAM_RAM, oam_bytes) ||
+	   !reader.read_bool(PPU_OAM_BUS_READ, oam_read) ||
+	   !reader.read_bool(PPU_OAM_BUS_WRITE, oam_write) ||
+	   !reader.read_bool(PPU_VRAM_BUS_READ, vram_read) ||
+	   !reader.read_bool(PPU_VRAM_BUS_WRITE, vram_write))
+	{
+		return fail();
+	}
+
+	TickSelector tick_fn = nullptr;
+	FetcherTickSelector fetcher_fn = nullptr;
+	if(!tick_selector_from_id(tick_id, tick_fn) ||
+	   !fetcher_selector_from_id(fetcher_id, fetcher_fn))
+	{
+		reader.mark_error(StateError::BadValue);
+		return fail();
+	}
+
+	if(mode > 3 || m_dots > 455 || m_lx > 168 ||
+	   m_pending_stat.countdown > 1 ||
+	   m_oam_scan.count > 10 || m_oam_scan.index > 40 ||
+	   m_oam_scan.request > 40 ||
+	   m_initial_scx.to_discard > 7 || m_initial_scx.discarded > 7 ||
+	   m_of.entry.number >= 40 || m_of.entry.x >= 168 ||
+	   m_psf.tile_data_vram_address > 0x1FFE ||
+	   m_bwf.tilemap_tile_vram_addr > 0x1FFF)
+	{
+		reader.mark_error(StateError::BadValue);
+		return fail();
+	}
+
+	std::array<SpriteList, 168> lists {};
+	std::deque<BgPixel> bg_fifo;
+	std::deque<ObjPixel> obj_fifo;
+	if(!unpack_oam_entries(oam_list_bytes, lists) ||
+	   !unpack_bg_fifo(bg_fifo_bytes, bg_fifo) ||
+	   !unpack_obj_fifo(obj_fifo_bytes, obj_fifo))
+	{
+		reader.mark_error(StateError::BadValue);
+		return fail();
+	}
+	if(vram_bytes.size() != m_vram.size() ||
+	   oam_bytes.size() != m_oam_ram.size() * 4)
+	{
+		reader.mark_error(StateError::BadLength);
+		return fail();
+	}
+
+	unpack_lcdc(lcdc_bits, m_lcdc);
+	unpack_lcdc(last_lcdc_bits, m_last_lcdc);
+	m_stat.lyc_eq_ly_int = (stat_bits & 0x40) != 0;
+	m_stat.oam_int = (stat_bits & 0x20) != 0;
+	m_stat.vblank_int = (stat_bits & 0x10) != 0;
+	m_stat.hblank_int = (stat_bits & 0x08) != 0;
+	m_stat.lyc_eq_ly = (stat_bits & 0x04) != 0;
+	m_stat.mode = static_cast<u8>(stat_bits & 0x03);
+	m_mode = static_cast<Mode>(mode);
+	m_tick_selector = tick_fn;
+	m_fetcher_tick_selector = fetcher_fn;
+	m_bg_fifo = std::move(bg_fifo);
+	m_obj_fifo = std::move(obj_fifo);
+	m_oam_entries = std::move(lists);
+
+	for(size_t i = 0; i < m_oam_ram.size(); ++i)
+	{
+		m_oam_ram[i].m_y = oam_bytes[i * 4 + 0];
+		m_oam_ram[i].m_x = oam_bytes[i * 4 + 1];
+		m_oam_ram[i].m_tile = oam_bytes[i * 4 + 2];
+		m_oam_ram[i].m_flags = oam_bytes[i * 4 + 3];
+	}
+	m_vram.data() = std::move(vram_bytes);
+
+	const auto set_lock = [](VideoBus& bus, VideoAccess access, bool locked)
+	{
+		if(locked)
+		{
+			bus.acquire(VideoDevice::Ppu, access);
+		}
+		else
+		{
+			bus.release(VideoDevice::Ppu, access);
+		}
+	};
+	set_lock(m_oam_bus, VideoAccess::Read, oam_read);
+	set_lock(m_oam_bus, VideoAccess::Write, oam_write);
+	set_lock(m_vram_bus, VideoAccess::Read, vram_read);
+	set_lock(m_vram_bus, VideoAccess::Write, vram_write);
+
+	// Keep the passive mirror consistent for callers that inspect it after a
+	// PPU-only load. QtreGB loads its LCD chunk afterwards; both were synced
+	// when the state was written.
+	sync_lcd_from_ppu();
+	return true;
+}
