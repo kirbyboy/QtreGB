@@ -1,0 +1,20 @@
+# Frame/audio regression manifest.
+# Format: <frames><TAB><path>
+# Paths are relative to this file. Blank lines and lines starting with # are
+# ignored. The first frame is frame 0.
+#
+# The set is intentionally small: PPU effects, APU output, CPU/timing and a
+# full test suite. Add ROMs only when they are useful for catching behavior
+# changes, not to duplicate mts/blargg coverage.
+
+90	../vendor/dmg-acid2/dmg-acid2.gb
+90	../vendor/mealybug/ppu/m3_bgp_change.gb
+90	../vendor/mealybug/ppu/m3_window_timing.gb
+90	../vendor/mealybug/ppu/m3_scx_low_3_bits.gb
+90	../vendor/mealybug/ppu/m3_wx_6_change.gb
+90	../roms/same-suite/apu/div_write_trigger.gb
+90	../roms/same-suite/interrupt/ei_delay_halt.gb
+90	../roms/blargg/dmg_sound/dmg_sound.gb	audio
+90	../roms/01-special.gb
+90	../roms/02-interrupts.gb
+90	../roms/mem_timing.gb

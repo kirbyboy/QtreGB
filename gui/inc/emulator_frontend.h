@@ -38,9 +38,17 @@ class EmulatorFrontend
 		void shutdown_input();
 		void set_language(const std::string& language);
 		const std::string& language() const { return m_language; }
+		void set_about_logo_path(const std::string& path)
+		{
+			m_about_logo_path = path;
+		}
+		// Opens a ROM from the command line / desktop %f argument.
+		void open_rom_file(const std::string& path) { open_rom_path(path); }
 		// One T-cycle for the primary instance, or for both when linked.
 		void tick();
 		void drain_audio();
+		// Writes dirty battery saves at most once per minute.
+		void poll_battery_autosave();
 		// Single-screen texture or the combined 320x144 link texture.
 		void update_frame();
 		void* get_texture_ID();
@@ -128,6 +136,7 @@ class EmulatorFrontend
 		std::uint64_t m_emulated_frames = 0;
 		FastForwardSpeed m_fast_forward_speed = FastForwardSpeed::X200;
 		FpsCounter m_fps;
+		double m_next_battery_autosave = 0.0;
 		std::vector<u8> m_bios;
 		std::vector<u8> m_session_bios;
 		std::string m_session_bios_path;
@@ -177,6 +186,8 @@ class EmulatorFrontend
 		void upload_combined_frame();
 		bool compose_combined_frame(std::vector<u32>& frame) const;
 		void draw_custom_palette_window();
+		void draw_about_window();
+		void ensure_about_logo();
 		enum class FileDialogAction
 		{
 			None,
@@ -236,6 +247,12 @@ class EmulatorFrontend
 		void save_state();
 		bool load_state();
 		bool m_open_custom_palette = false;
+		bool m_open_about_popup = false;
+		std::string m_about_logo_path;
+		void* m_about_logo_texture = nullptr;
+		int m_about_logo_width = 0;
+		int m_about_logo_height = 0;
+		bool m_about_logo_attempted = false;
 		std::array<Rgb, 4> m_custom_palette_edit {};
 		std::string m_state_message;
 		double m_state_message_until = 0.0;

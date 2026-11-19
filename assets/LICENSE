@@ -19,6 +19,11 @@ This dedication currently covers the application icon and logo:
 
 - `assets/QtreGB_icon_generic_256.png`.
 
+Exception: `assets/screenshot_01.png` is a documentation capture that includes
+game imagery from a third-party Game Boy game. That imagery is not dedicated to
+CC0 and remains with its respective author. The screenshot is included only to
+document QtreGB.
+
 Provenance of the application icon
 ----------------------------------
 The application icon was created for the QtreGB project in 2026. To the best of

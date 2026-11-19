@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -23,6 +24,8 @@
 #include "imgui_manager.h"
 #include "app_config.h"
 #include "i18n.h"
+#include "build_info.h"
+#include "version.h"
 
 using namespace qtreGB;
 
@@ -59,6 +62,38 @@ static std::string resolve_language_directory()
 		}
 	}
 	return "lang";
+}
+
+static std::string resolve_asset_directory()
+{
+	if(const char* override_path = std::getenv("QTR_ASSET_DIR"))
+	{
+		if(override_path[0] != '\0')
+		{
+			return std::filesystem::u8path(override_path).u8string();
+		}
+	}
+
+	std::vector<std::filesystem::path> candidates;
+	if(char* base = SDL_GetBasePath())
+	{
+		const std::filesystem::path base_path = std::filesystem::u8path(base);
+		candidates.push_back(base_path / "assets");
+		candidates.push_back(base_path / ".." / "share" / "QtreGB" / "assets");
+		candidates.push_back(base_path / ".." / "Resources" / "assets");
+		SDL_free(base);
+	}
+	std::error_code error;
+	candidates.push_back(std::filesystem::current_path(error) / "assets");
+
+	for(const std::filesystem::path& candidate : candidates)
+	{
+		if(std::filesystem::is_directory(candidate, error))
+		{
+			return candidate.u8string();
+		}
+	}
+	return "assets";
 }
 
 constexpr int GB_FRAME_TICKS = 70224;
@@ -149,8 +184,31 @@ int main(int argc, char* argv[])
 }
 */
 
-int main()
+int main(int argc, char** argv)
 {
+	const char* rom_argument = nullptr;
+	for(int i = 1; i < argc; ++i)
+	{
+		if(std::strcmp(argv[i], "--help") == 0 ||
+		   std::strcmp(argv[i], "-h") == 0)
+		{
+			std::printf("QtreGB %s\n", QTREGB_VERSION);
+			std::printf("Usage: QtreGB [--help] [--version] [game.gb]\n");
+			return 0;
+		}
+		if(std::strcmp(argv[i], "--version") == 0 ||
+		   std::strcmp(argv[i], "-v") == 0)
+		{
+			std::printf("QtreGB %s (%s)\n", QTREGB_VERSION,
+				QTREGB_BUILD_VERSION);
+			return 0;
+		}
+		if(argv[i][0] != '-' && rom_argument == nullptr)
+		{
+			rom_argument = argv[i];
+		}
+	}
+
 	const AppConfig config = AppConfig::load_default();
 
 	SDLRendererBackend backend;
@@ -168,7 +226,13 @@ int main()
 	frontend.set_language(config.language);
 	frontend.set_fast_forward_speed(config.fast_forward_speed);
 	frontend.set_recent_roms(config.recent_roms);
+	frontend.set_about_logo_path(resolve_asset_directory() +
+		"/QtreGB_icon_generic_256.png");
 	EmulatorInstance* emulator = frontend.get_emulator();
+	if(rom_argument != nullptr)
+	{
+		frontend.open_rom_file(rom_argument);
+	}
 
 	bool running = true;
 	SDL_Event event;
@@ -281,6 +345,7 @@ int main()
 			frontend.update_frame();
 		}
 
+		frontend.poll_battery_autosave();
 		backend.new_frame();
 		frontend.handle_input();
 		frontend.draw_main_window();

@@ -737,3 +737,36 @@ msgstr "Guardar aquí"
 
 msgid "No session state saved"
 msgstr "No hay estado de sesión guardado"
+
+msgid "Help"
+msgstr "Ayuda"
+
+msgid "About QtreGB..."
+msgstr "Acerca de QtreGB..."
+
+msgid "About QtreGB"
+msgstr "Acerca de QtreGB"
+
+msgid "Made by kirbyboy"
+msgstr "Hecho por kirbyboy"
+
+msgid "Version %s"
+msgstr "Versión %s"
+
+msgid "Copyright (C) 2026 the QtreGB project"
+msgstr "Copyright (C) 2026 el proyecto QtreGB"
+
+msgid "License: GNU General Public License v3.0 or later"
+msgstr "Licencia: GNU General Public License v3.0 o posterior"
+
+msgid "Code: GPL-3.0-or-later"
+msgstr "Código: GPL-3.0-or-later"
+
+msgid "Visual assets: CC0 1.0"
+msgstr "Recursos visuales: CC0 1.0"
+
+msgid "Build: %s"
+msgstr "Compilación: %s"
+
+msgid "Close"
+msgstr "Cerrar"

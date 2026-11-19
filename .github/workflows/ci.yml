@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            dpkg-dev \
+            curl \
+            libsdl2-dev \
+            libglew-dev \
+            libgl1-mesa-dev \
+            desktop-file-utils \
+            appstream
+
+      - name: Fetch local dependencies
+        run: make deps
+
+      - name: Build
+        run: make -j"$(nproc)"
+
+      - name: Unit tests
+        run: make run_tests
+
+      - name: Build libretro core
+        run: make libretro
+
+      - name: Build Debian package
+        run: make deb
+
+      - name: Build AppImage
+        run: make appimage
+
+      - name: Validate desktop metadata
+        run: |
+          desktop-file-validate packaging/qtrebg.desktop
+          appstreamcli validate packaging/io.github.kirbyboy.QtreGB.metainfo.xml
+
+      - name: Checksums
+        run: |
+          cd build
+          sha256sum qtrebg_*.deb QtreGB-*.AppImage > SHA256SUMS-ci
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: qtrebg-linux
+          path: |
+            build/qtrebg_*.deb
+            build/QtreGB-*.AppImage
+            build/SHA256SUMS-ci
+            build/qtrebg_libretro.so

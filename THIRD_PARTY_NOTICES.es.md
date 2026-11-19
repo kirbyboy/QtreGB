@@ -102,6 +102,15 @@ stb_image y stb_image_resize2 se incluyen en ImGuiFileDialog para la carga y
 el escalado de imágenes. stb_image_write lo usa QtreGB para incrustar la
 imagen de vista previa en los archivos de savestate.
 
+### Cabecera de la API libretro
+
+libretro.h
+Copyright (C) 2010-2024 The RetroArch team
+Licencia MIT
+
+Se usa en el wrapper del core en `libretro/`. El texto MIT completo está al
+principio de `libretro/libretro.h`.
+
 ### doctest
 
 doctest v2.4.12

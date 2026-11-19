@@ -1,3 +1,7 @@
+> **Nota (2026-11-19):** las rutas `tmp/...` que aparecen en este documento
+> son históricas. Se eliminó la política de copias periódicas y los backups
+> locales; el código de referencia está en Git.
+
 # QtreGB — Handoff: CPU micro-ops (DocBoy-style)
 
 **Fecha:** 2026-11-15 (actualizado 2026-11-16)

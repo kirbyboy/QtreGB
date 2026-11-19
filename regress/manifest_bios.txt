@@ -1,0 +1,14 @@
+# BIOS-mode manifest.
+# The DMG boot ROM takes ~327 frames to hand over to the cartridge, so this
+# set uses 400 frames to include the boot animation, the handover and the
+# first ~70 frames of the ROM. It is intentionally smaller than the no-BIOS
+# manifest because each entry costs 400 frames.
+# Format: <frames><TAB><path>[<TAB>audio]
+
+400	../vendor/dmg-acid2/dmg-acid2.gb
+400	../vendor/mealybug/ppu/m3_bgp_change.gb
+400	../vendor/mealybug/ppu/m3_window_timing.gb
+400	../vendor/mealybug/ppu/m3_scx_low_3_bits.gb
+400	../roms/blargg/dmg_sound/dmg_sound.gb	audio
+400	../roms/01-special.gb
+400	../roms/02-interrupts.gb

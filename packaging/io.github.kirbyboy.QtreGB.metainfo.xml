@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kirbyboy.QtreGB</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>QtreGB</name>
+  <summary>DMG Game Boy emulator with SDL2 and ImGui</summary>
+  <description>
+    <p>
+      QtreGB is a DMG Game Boy emulator written in C++17. The CPU uses a
+      micro-op pipeline and the PPU is a native dot-driven implementation.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>DMG Game Boy emulation with SDL2 and ImGui.</li>
+      <li>Save-state slots, battery saves and RTC support.</li>
+      <li>Single-player and Link cable sessions.</li>
+      <li>English and Spanish UI.</li>
+      <li>Desktop launcher support for .gb files.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.kirbyboy.QtreGB.desktop</launchable>
+  <url type="homepage">https://github.com/kirbyboy/QtreGB</url>
+  <url type="bugtracker">https://github.com/kirbyboy/QtreGB/issues</url>
+  <developer id="io.github.kirbyboy">
+    <name>kirbyboy</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Game</category>
+    <category>Emulator</category>
+  </categories>
+  <keywords>
+    <keyword>Game Boy</keyword>
+    <keyword>GB</keyword>
+    <keyword>emulator</keyword>
+    <keyword>DMG</keyword>
+  </keywords>
+  <releases>
+    <release version="0.9.0" date="2026-11-19">
+      <description>
+        <p>First packaged release.</p>
+      </description>
+    </release>
+  </releases>
+  <provides>
+    <binary>QtreGB</binary>
+  </provides>
+</component>

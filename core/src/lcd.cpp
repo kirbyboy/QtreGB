@@ -185,7 +185,8 @@ void LCD::write(u16 address, u8 value)
 			}
 			else
 			{
-				m_delayed_writes[m_delayed_write_count++] = DelayedWrite{address, value, delay};
+				m_delayed_writes[m_delayed_write_count++] = DelayedWrite{
+					static_cast<u8>(address), value, delay};
 			}
 			break;
 		}

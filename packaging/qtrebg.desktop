@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=QtreGB
+GenericName=Game Boy Emulator
+Comment=DMG Game Boy emulator with SDL2 and ImGui
+Exec=QtreGB %f
+Icon=qtrebg
+Terminal=false
+Categories=Game;Emulator;
+StartupWMClass=QtreGB
+MimeType=application/x-gameboy-rom;
+Keywords=Game Boy;GB;emulator;

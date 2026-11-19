@@ -1,3 +1,7 @@
+> **Nota (2026-11-19):** las rutas `tmp/...` que aparecen en este documento
+> son históricas. Se eliminó la política de copias periódicas y los backups
+> locales; el código de referencia está en Git.
+
 ## 66. SESIÓN 2026-10-29 — Fetch-ahead + Multi-stage (final)
 
 ### Cambios implementados (NO revertidos)
@@ -861,7 +865,7 @@ componentes y puntos de acoplamiento. No se empieza en esta sección.
 ## 101. SESIÓN 2026-11-17 — Refactor de EmulatorInstance para múltiples instancias
 
 **Backup previo:** `tmp/20261117_141436/`
-**Backup final:** `tmp/20261117_143508/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 101.1 Objetivo
@@ -985,7 +989,7 @@ del emulador.
 ## 103. SESIÓN 2026-11-17 — LinkCable de GUI (sesión) y alcance
 
 **Backup previo:** `tmp/20261117_144025/`
-**Backup final:** `tmp/20261117_150922/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 103.1 Qué se ha hecho
@@ -1029,7 +1033,7 @@ La FUI se decide en la siguiente conversación.
 ## 104. SESIÓN 2026-11-17 — Serial core, LinkCable, GUI LinkSession y jugador 2
 
 **Backup previo:** `tmp/20261117_150922/`
-**Backup final:** `tmp/20261117_152549/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 104.1 Serial en el core
@@ -1123,7 +1127,7 @@ SB/SC siguen en el chunk IO. Un `.sr1`/`.sr2` guarda **una máquina**:
 ## 105. SESIÓN 2026-11-17 — GUI de dos jugadores y textura combinada
 
 **Backup previo:** `tmp/20261117_152549/`
-**Backup final:** `tmp/20261117_153910/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 105.1 Carga del jugador 2
@@ -1189,7 +1193,7 @@ También se mantiene el probe de link con intercambio serie real
 ## 106. SESIÓN 2026-11-17 — Consumo alto de CPU: pacer del bucle principal
 
 **Backup previo:** `tmp/20261117_153910/`
-**Backup final:** `tmp/20261117_155655/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 106.1 Causa
@@ -1237,7 +1241,7 @@ En ambos casos se quemaba CPU sin avanzar más la emulación.
 ## 107. SESIÓN 2026-11-17 — CPU: build optimizado de la GUI
 
 **Backup previo:** `tmp/20261117_155655/`
-**Backup final:** `tmp/20261117_160718/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 107.1 Medición
@@ -1288,7 +1292,7 @@ emular; con `-O2` bajan a menos de la mitad de un núcleo.
 ## 108. SESIÓN 2026-11-17 — Profiling: `getenv` por T-cycle
 
 **Backup previo:** `tmp/20261117_160718/`
-**Backup final:** `tmp/20261117_163344/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 108.1 Método
@@ -1563,7 +1567,7 @@ perf report -i perf.data --stdio --no-children --percentage relative \
 ## 110. SESIÓN 2026-11-17 — Espejo LCD fuera del camino por dot
 
 **Backup previo:** `tmp/20261117_173335/`
-**Backup final:** `tmp/20261117_173934/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 110.1 Motivo
@@ -1653,7 +1657,7 @@ Build limpio core + GUI: **OK**.
 ## 111. SESIÓN 2026-11-17 — Traza CPUEVT en compilación condicional
 
 **Backup previo:** `tmp/20261117_173934/`
-**Backup final:** `tmp/20261117_175114/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 111.1 Motivo
@@ -1745,7 +1749,7 @@ Build limpio de producción: **OK**.
 ## 112. SESIÓN 2026-11-17 — LTO en el build por defecto
 
 **Backup previo:** `tmp/20261117_180000/`
-**Backup final:** `tmp/20261117_180301/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 112.1 Cambio
@@ -1822,7 +1826,7 @@ afecta al binario. Si el tiempo de enlace molesta, se puede probar
 ## 113. SESIÓN 2026-11-17 — MBC5
 
 **Backup previo:** `tmp/20261117_180604/`
-**Backup final:** `tmp/20261117_181057/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 113.1 Diferencias con los mappers existentes
@@ -1910,7 +1914,7 @@ Build con LTO: **OK**.
 ## 114. SESIÓN 2026-11-17 — Configuración `.ini` multiplataforma
 
 **Backup previo:** `tmp/20261117_182841/`
-**Backup final:** `tmp/20261117_184117/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 114.1 Rutas
@@ -1990,7 +1994,7 @@ salir. Si la ventana está maximizada, conserva el último tamaño restaurado.
 ## 115. SESIÓN 2026-11-17 — Pacing consciente del vsync
 
 **Backup previo:** `tmp/20261117_184117/`
-**Backup final:** `tmp/20261117_190247/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 115.1 Problema
@@ -2052,7 +2056,7 @@ modo `present_mode=gameboy|monitor` a `AppConfig`.
 ## 116. SESIÓN 2026-11-17 — Menú Graphics, paletas, LCD y ghosting
 
 **Backup previo:** `tmp/20261117_190247/`
-**Backup final:** `tmp/20261117_220448/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 116.1 Menú Graphics
@@ -2309,7 +2313,7 @@ sin bandas intermedias no monótonas.
 ## 119. SESIÓN 2026-11-17 — Menú Audio
 
 **Backup previo:** `tmp/20261117_220448/`
-**Backup final:** `tmp/20261117_221727/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 119.1 Opciones
@@ -2354,7 +2358,7 @@ volume=50
 ## 120. SESIÓN 2026-11-17 — Settings: Controllers y Key bindings
 
 **Backup previo:** `tmp/20261117_221727/`
-**Backup final:** `tmp/20261117_231621/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 120.1 Modelo
@@ -2536,7 +2540,7 @@ desactivada. No se crea `imgui.ini`.
 
 ### 120.8 Corrección de UI: IDs duplicados y barra de estado
 
-**Backup final:** `tmp/20261117_233254/`
+**Backup final:** eliminado; el código está en Git.
 
 #### IDs duplicados
 
@@ -2597,7 +2601,7 @@ mover la tabla. En `Controllers` la barra queda debajo del checkbox
 
 ## 121. SESIÓN 2026-11-18 — Licencia, assets y vendorización de ImGuiFileDialog
 
-**Backup final:** `tmp/20261118_010856/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 121.1 Licencia del proyecto
@@ -2660,7 +2664,7 @@ añadir i18n. La sesión 122 lo integró finalmente en `QtreGB-GUI`.
 
 ## 122. SESIÓN 2026-11-19 — ImGuiFileDialog, fin de TinyFileDialogs e idiomas
 
-**Backup final:** `tmp/20261119_062529/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 122.1 File dialogs
@@ -2729,7 +2733,7 @@ language=system
 
 ## 123. SESIÓN 2026-11-19 — Settings → Paths
 
-**Backup final:** `tmp/20261119_065746/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 123.1 Modelo
@@ -2831,7 +2835,7 @@ savestates_same_as_rom=1
 
 ## 124. SESIÓN 2026-11-19 — Link sessions y savestate de sesión
 
-**Backup final:** `tmp/20261119_082742/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 124.1 Menú Link
@@ -2939,7 +2943,7 @@ mensaje lo indica.
 
 ## 125. SESIÓN 2026-11-19 — Core dump al arrancar con BIOS como directorio
 
-**Backup final:** `tmp/20261119_084153/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 125.1 Causa
@@ -2986,7 +2990,7 @@ seleccione el archivo de 256 bytes.
 
 ## 126. SESIÓN 2026-11-19 — Diálogo de BIOS y ConfirmOverwrite
 
-**Backup final:** `tmp/20261119_084349/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 126.1 Causa
@@ -3015,7 +3019,7 @@ fuera una operación de apertura.
 
 ## 127. SESIÓN 2026-11-19 — 10 slots de savestate y barra de estado
 
-**Backup final:** `tmp/20261119_091945/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 127.1 Slots
@@ -3085,7 +3089,7 @@ previous_state_slot_controller=none
 
 ## 128. SESIÓN 2026-11-19 — Línea horizontal fija en el jugador 2
 
-**Backup final:** `tmp/20261119_092737/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 128.1 Causa
@@ -3123,7 +3127,7 @@ arbitrario.
 
 ## 129. SESIÓN 2026-11-19 — Audio de Link: P1, P2 o ambos
 
-**Backup final:** `tmp/20261119_095046/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 129.1 Opciones
@@ -3173,7 +3177,7 @@ arbitrario.
 
 ## 130. SESIÓN 2026-11-19 — Fast Forward, Exit y bloqueo de input en Settings
 
-**Backup final:** `tmp/20261119_103257/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 130.1 Limpieza
@@ -3234,7 +3238,7 @@ Comportamiento del bucle:
 
 ## 131. SESIÓN 2026-11-19 — FPS reales del emulador en la barra de estado
 
-**Backup final:** `tmp/20261119_105713/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 131.1 Objetivo
@@ -3303,7 +3307,7 @@ Comportamiento del bucle:
 
 ## 132. SESIÓN 2026-11-19 — Archivos recientes en el menú File
 
-**Backup final:** `tmp/20261119_112347/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 132.1 Comportamiento
@@ -3360,7 +3364,7 @@ Comportamiento del bucle:
 
 ## 133. SESIÓN 2026-11-19 — Contenedor de savestate (fase 1)
 
-**Backup final:** `tmp/20261119_120600/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 133.1 Alcance
@@ -3462,7 +3466,7 @@ Mecanismo recomendado para la fase 2:
 
 ## 134. SESIÓN 2026-11-19 — Contenedor de estado de Link (.qss v2)
 
-**Backup final:** `tmp/20261119_130907/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 134.1 Alcance
@@ -3540,7 +3544,7 @@ posterior.
 
 ## 135. SESIÓN 2026-11-19 — Savestates como PNG con datos y navegador de estados
 
-**Backup final:** `tmp/20261119_144209/`
+**Backup final:** eliminado; el código está en Git.
 **Git:** sin commit.
 
 ### 135.1 Formato
@@ -3614,7 +3618,7 @@ copia RGBA de la miniatura.
 
 ---
 
-## 136. SIGUIENTE TAREA — Core libretro (fase 1)
+## 136. Core libretro (fase 1) — decisiones y plan
 
 **Estado:** pendiente.
 **Carpeta:** `libretro/`.
@@ -3694,3 +3698,359 @@ Si el schema del core añade campos nuevos, hay que revisar esta constante.
 4. Exponer save RAM y `retro_serialize`/`unserialize`.
 5. BIOS opcional desde `RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY`.
 6. Build `.so`/`.dll`/`.dylib` y prueba en RetroArch.
+
+---
+
+## 137. SESIÓN 2026-11-19 — Primera versión del core libretro
+
+**Estado:** primera versión funcional.
+**Ficheros:** `libretro/libretro.cpp`, `libretro/libretro.h`,
+`libretro/Makefile`, `libretro/README.md`.
+
+### 137.1 Limpieza de copias
+
+- Eliminada la política de copias periódicas de `AGENTS.md`.
+- Eliminados los 62 backups de `tmp/` y los archivos `.pre-*`/WAV de prueba
+  (unos 140 MB). `tmp/` queda vacío y sigue ignorado por Git.
+- Las referencias históricas del handoff a `tmp/...` se sustituyeron por
+  “eliminado; el código está en Git”.
+
+### 137.2 Build
+
+- `make libretro` desde la raíz, o `make -C libretro`.
+- Resultado: `build/qtrebg_libretro.so`.
+- Incluye los 26 fuentes de `core/src/` y el wrapper, compilados con `-fPIC`
+  y enlazados con `-shared`.
+- Makefile independiente: no incluye `common.mk` ni necesita `sdl2-config`.
+- `make -C libretro install` instala `qtrebg_libretro.so` y
+  `qtrebg_libretro.info` en `~/.config/retroarch/cores` (ruta configurable con
+  `RETROARCH_CORES`).
+- Dependencias dinámicas: libstdc++, libgcc, libc y libm. **No** enlaza SDL,
+  ImGui ni la GUI.
+
+### 137.3 API implementada
+
+- `retro_set_environment`, `retro_set_video_refresh`,
+  `retro_set_audio_sample`, `retro_set_audio_sample_batch`,
+  `retro_set_input_poll`, `retro_set_input_state`.
+- `retro_init`, `retro_deinit`, `retro_api_version`,
+  `retro_get_system_info`, `retro_get_system_av_info`.
+- `retro_load_game`, `retro_load_game_special` (rechaza), `retro_unload_game`,
+  `retro_reset`, `retro_run`.
+- `retro_serialize_size`, `retro_serialize`, `retro_unserialize`.
+- `retro_get_memory_data`, `retro_get_memory_size`,
+  `retro_get_region`, `retro_set_controller_port_device`,
+  `retro_cheat_reset`, `retro_cheat_set`.
+
+Comportamiento:
+
+- `retro_get_system_info`: `QtreGB`, extensión `gb`, `need_fullpath = false`.
+- AV: 160×144, 59.7275 fps, 48 kHz, XRGB8888.
+- `retro_run`: ticks hasta completar frame (o 70224 si la LCD está apagada).
+- Paleta DMG de cuatro tonos en XRGB8888.
+- Audio: drena el ring del APU y usa `audio_batch_cb` (o `audio_sample_cb`).
+- Input: RetroPad A/B/Start/Select y D-pad.
+- Publica `SET_INPUT_DESCRIPTORS` y `SET_CONTROLLER_INFO` para que RetroArch
+  muestre los botones en `Quick Menu → Controls → Port 1 Controls`.
+- Save RAM: buffer estable expuesto como `RETRO_MEMORY_SAVE_RAM`; se aplica al
+  primer `retro_run` y se actualiza desde el cartucho tras cada frame.
+- System RAM: WRAM de 8 KiB.
+- Estados: blob del core; buffer de `retro_serialize_size` de **327.680 B**
+  (320 KiB). `retro_unserialize` recorta el buffer usando `payload_size` de la
+  cabecera del core.
+- BIOS opcional: `dmg_boot.bin` o `dmg_bios.bin` en el system directory del
+  frontend.
+- RTC: comportamiento actual del core.
+- Sin Link Cable, sin paleta configurable y sin core options todavía.
+
+### 137.4 Prueba con host libretro propio
+
+Como RetroArch no está instalado en el entorno, se escribió un host mínimo que
+carga el `.so` con `dlopen`, registra los callbacks y ejecuta ROMs reales.
+
+Resultado:
+
+- API version: 1.
+- Core: `QtreGB`, extensión `gb`, `need_fullpath = 0`.
+- AV: 160×144, 59.7275 fps, 48 kHz.
+- Tetris, 180 frames:
+  - vídeo 160×144;
+  - 141.771 frames de audio;
+  - estado de 327.680 B serializado y cargado correctamente;
+  - save RAM 0 (sin batería);
+  - system RAM 8192 B.
+- Pokémon Blue, 90 frames:
+  - save RAM 32.768 B;
+  - estado serializado y cargado correctamente;
+  - system RAM 8192 B.
+- Frame de Tetris capturado y verificado visualmente a 160×144.
+- `nm -D` muestra los 25 símbolos `retro_*` esperados.
+
+### 137.4b RetroArch real
+
+- Instalado en `~/.config/retroarch/cores`:
+  - `qtrebg_libretro.so`;
+  - `qtrebg_libretro.info`.
+- `retroarch -L build/qtrebg_libretro.so --max-frames=120 roms/tetris.gb`
+  ejecutó el core y capturó la pantalla de Tetris.
+- Con una configuración temporal que apunta `libretro_directory` y
+  `libretro_info_path` a `~/.config/retroarch/cores`, RetroArch resolvió el
+  core por nombre (`-L qtrebg_libretro`) y lo cargó:
+  - API 1;
+  - geometría 160×144;
+  - aspect 1.111;
+  - 59.73 fps;
+  - 48 kHz.
+- El `.info` no hace falta para `Load Core from file`; sí para que aparezca en
+  la lista de cores y asocie `.gb`.
+- Configuración directa aplicada en `~/.config/retroarch/retroarch.cfg`:
+  - `libretro_directory = "~/.config/retroarch/cores/"`
+  - `libretro_info_path = "~/.config/retroarch/cores/"`
+- Con esa configuración, `retroarch -L qtrebg_libretro` resuelve el core a
+  `/home/pedro/.config/retroarch/cores/qtrebg_libretro.so` y lo ejecuta.
+- `video_driver` está en `vulkan`, que es lo que necesita el shader Slang.
+- Retro Display Lab instalado en
+  `/home/pedro/RetroArch/shaders/retro-display-lab` (pack completo, carpeta
+  visible). `video_shader_dir = "~/RetroArch/shaders"`.
+- Probado con Vulkan y `--set-shader=.../dmg01-reference-v1.slangp`:
+  - compilan los 5 pases Slang;
+  - se crean los framebuffers 1×144, 160×1, 160×144 y 480×432;
+  - captura final de 480×432 con el aspecto DMG procesado.
+- `video_driver = "vulkan"`; para usar el shader, cargar el preset desde
+  `Settings → Video → Shader` (o `--set-shader`). `video_shader_enable` sigue
+  en `false`, así que no se aplica automáticamente al arrancar.
+- Problema de mando corregido:
+  - el jugador 1 tenía todos los `input_player1_*_btn` en `nul`;
+  - el autoconfig `PS4 Controller.cfg` estaba solo en el directorio del
+    sistema; copiado a `~/.config/retroarch/autoconfig/`;
+  - asignados directamente Cross/Circle/Options/Share/D-pad en
+    `retroarch.cfg`;
+  - el core publica ahora descriptores y controller info;
+  - el log de RetroArch confirma:
+    `[Autoconf] Se ha configurado PS4 Controller (DualShock 4 v2) en el puerto 1`.
+- Para reasignar: cargar contenido, `Quick Menu → Controls → Port 1 Controls`,
+  comprobar que el Device Type es `Game Boy`/`RetroPad` y capturar cada botón.
+- El preset está calibrado para KONKR GT78-VN 960×640; en un monitor de
+  escritorio el modelo temporal funciona, pero la calibración de color/escala
+  no es la misma.
+
+### 137.5 Evidencia del proyecto
+
+- `make -C libretro`: OK.
+- `make run_tests`: **253 casos / 4209 assertions**, verde.
+- `make run_blargg`: **15/15**.
+- `make run_mts`: **42/42**.
+- `make run_regress`: **11 ROMs / 990 frames, all match**.
+- BIOS: **7 ROMs / 2800 frames, all match**.
+- `imgui.ini` no se genera.
+
+### 137.6 Pendiente
+
+- Core options/paleta configurable.
+- Probar el shader de Retro Display Lab sobre el core en RetroArch.
+- `RETRO_MEMORY_RTC`.
+- Sincronización de save RAM si el frontend escribe mientras corre.
+- Link Cable: fuera de alcance de la primera versión.
+
+---
+
+## 138. SESIÓN 2026-11-19 — About, arranque con ROM y paquetes 0.9.0
+
+**Estado:** pre-1.0 empaquetado.
+**Versión:** `0.9.0` en `gui/inc/version.h`.
+
+### 138.1 About
+
+- `Help → About QtreGB...`.
+- Copia el estilo del About de QtreGBPaint:
+  - icono `assets/QtreGB_icon_generic_256.png`;
+  - nombre, versión y build (`QTREGB_BUILD_VERSION`);
+  - “Made by kirbyboy”;
+  - copyright, GPL-3.0-or-later, assets CC0 1.0;
+  - enlaces a GNU y al repositorio.
+- El icono se carga con `stb_image` desde una ruta resuelta como los assets:
+  `QTR_ASSET_DIR`, `<exe>/assets`, `<exe>/../share/QtreGB/assets`,
+  `<exe>/../Resources/assets`, `./assets`.
+- Captura real verificada: About en español, icono correcto y versión 0.9.0.
+
+### 138.2 Arranque con ROM
+
+- `main(int argc, char** argv)`.
+- Opciones:
+  - `--help` / `-h`;
+  - `--version` / `-v`;
+  - ROM posicional.
+- `QtreGB game.gb` arranca el juego en single-player.
+- `packaging/qtrebg.desktop` usa `Exec=QtreGB %f` y
+  `MimeType=application/x-gameboy-rom;`.
+- El binario del `.deb` y el AppImage aceptan los mismos argumentos.
+
+### 138.3 Paquetes
+
+- `make deb` → `build/qtrebg_0.9.0_amd64.deb` (3,4 MB).
+  - binario `/usr/bin/QtreGB`;
+  - assets y lang en `/usr/share/QtreGB`;
+  - desktop, icono 256×256 y metainfo AppStream;
+  - documentación y licencias en `/usr/share/doc/qtrebg`;
+  - `postinst`/`postrm`.
+- `make appimage` → `build/QtreGB-0.9.0-x86_64.AppImage` (11 MB).
+  - linuxdeploy/appimagetool desde `temp/appimage-tools` o descarga;
+  - SDL2/GLEW/stdc++/libgcc empaquetados; libGL del sistema;
+  - icono, desktop, metainfo, assets y lang dentro del AppDir.
+- `make release-assets` genera ambos y `build/SHA256SUMS-0.9.0`.
+
+### 138.4 Evidencia
+
+- Build: OK. Solo el warning preexistente de `core/src/lcd.cpp:188`.
+- `make run_tests`: **253 casos / 4209 assertions**, verde.
+- About verificado visualmente.
+- `--version` y `--help` verificados en binario, `.deb` extraído y AppImage.
+- `QtreGB game.gb` verificado con ROM real.
+- `.deb` generado y extraído; el binario arranca.
+- AppImage generado; `--version`, `--help` y arranque con ROM bajo SDL dummy.
+- `desktop-file-validate packaging/qtrebg.desktop`: OK.
+- `appstreamcli validate packaging/io.github.kirbyboy.QtreGB.metainfo.xml`:
+  OK (solo un campo redundante).
+- SHA256:
+  - `qtrebg_0.9.0_amd64.deb`:
+    `497f35326b4fe188d017af671a5d1325e642feb3137f3582d6f2e0d8756480ff`
+  - `QtreGB-0.9.0-x86_64.AppImage`:
+    `b7a3e9b059f0182ef0cb303f9d79ddbaf00417dadc278aa8d8aeb2f1aaa53305`
+
+### 138.5 Checklist antes de 1.0
+
+Imprescindible:
+
+- Autoguardado atómico del `.sav` cada 60 s (fase 2 pendiente).
+- Probar `.deb` y AppImage en una máquina/VM limpia.
+- CI que compile, ejecute tests y genere los paquetes.
+- CHANGELOG/release notes y tag `v1.0.0`.
+- Subir `QTREGB_VERSION` a `1.0.0` y regenerar paquetes.
+
+Recomendable:
+
+- Quitar el warning de `lcd.cpp`.
+- Smoke test de GUI (arranque, ROM, About, save/load).
+- Revisar el modo de presentación por defecto (`Auto` vs `Monitor`).
+- Documentar `--help`, paquetes y asociación `.gb` en README.
+- Revisar licencias/avisos una última vez.
+- Probar AppImage en otra distro y con integración de escritorio.
+
+Opcional:
+
+- DRC/audio sync para pacing.
+- Release separada del core libretro.
+- Builds de Windows/macOS.
+
+---
+
+## 139. SESIÓN 2026-11-19 — Dependencias, batería atómica, CI y notas 0.9.0
+
+**Estado:** pre-1.0, sin subir de versión.
+
+### 139.1 `make deps`
+
+- `scripts/bootstrap_deps.sh` + `scripts/deps/imgui.Makefile`.
+- Pines:
+  - Dear ImGui **v1.92.4-docking**;
+  - doctest **v2.4.12**.
+- ImGuiFileDialog se compila desde `third_party/ImGuiFileDialog`, no se
+  descarga.
+- `lib/` sigue ignorado por Git.
+- Probado desde cero moviendo `lib/` fuera: `make deps` descarga, compila y
+  deja ImGui/doctest/ImGuiFileDialog listos; el build y los tests posteriores
+  pasan.
+
+### 139.2 Batería atómica y autosave
+
+- `Cart` tiene `battery_dirty`.
+  - Se marca en escrituras del cartucho y al cargar un savestate.
+  - Se limpia al cargar un `.sav` y tras guardar.
+- `Cart::save_battery_ram` escribe `<rom>.sav.tmp`, hace `flush`, cierra y
+  reemplaza `<rom>.sav` con `rename`.
+- `EmulatorFrontend::poll_battery_autosave()` guarda los cartuchos sucios cada
+  **60 s**.
+- También se guarda al salir, cambiar de ROM, resetear o cambiar la carpeta de
+  batería.
+- Si no hay cambios, no se reescribe el `.sav`.
+- Test nuevo: `tests/test_cart_battery.cpp` (dirty, guardado atómico, sin
+  `.tmp` residual, recarga y reemplazo).
+
+### 139.3 CI y notas
+
+- `.github/workflows/ci.yml`:
+  - instala dependencias del sistema;
+  - `make deps`;
+  - build, tests, core libretro;
+  - `.deb` + AppImage;
+  - valida desktop/metainfo;
+  - sube los artefactos.
+- `packaging/RELEASE_NOTES_0.9.0.md` creado y copiado a los paquetes.
+- `make release-assets` copia también `RELEASE_NOTES-0.9.0.md` a `build/`.
+
+### 139.4 Evidencia
+
+- `make deps` desde cero: OK.
+- `make -j`: OK.
+- `make run_tests`: **254 casos / 4227 assertions**, verde.
+- `make run_blargg`: **15/15**.
+- `make run_mts`: **42/42**.
+- `make run_regress`: **11 ROMs / 990 frames, all match**.
+- BIOS: **7 ROMs / 2800 frames, all match**.
+- Release assets 0.9.0 regenerados:
+  - `qtrebg_0.9.0_amd64.deb`
+    `497f35326b4fe188d017af671a5d1325e642feb3137f3582d6f2e0d8756480ff`
+  - `QtreGB-0.9.0-x86_64.AppImage`
+    `b7a3e9b059f0182ef0cb303f9d79ddbaf00417dadc278aa8d8aeb2f1aaa53305`
+- `imgui.ini` no se genera.
+
+
+---
+
+## 140. SESIÓN 2026-11-19 — Warning LCD y modo Monitor por defecto
+
+### 140.1 Warning
+
+- `core/src/lcd.cpp:188` convertía `u16 address` a `u8` en el inicializador de
+  `DelayedWrite`.
+- Añadido `static_cast<u8>(address)` en el único punto de construcción.
+- El caso solo se ejecuta para direcciones 2/3/5/7/8/9/10/11, así que el cast
+  es seguro.
+- Build limpio: **0 warnings, 0 errors**.
+
+### 140.2 Modo de presentación
+
+- `DisplaySettings::present_mode` pasa de `Auto` a **`Monitor`** por defecto.
+- `Monitor` deja que el vsync del monitor marque la presentación y evita el
+  `sleep` de 59,7275 Hz que peleaba con vblank en 60/144 Hz.
+- `Game Boy` sigue disponible para VRR/modos de refresco personalizados.
+- Test de `AppConfig` actualizado.
+
+### 140.3 Evidencia
+
+- `make clean && make`: 0 warnings, 0 errors.
+- `make run_tests`: **254 casos / 4227 assertions**, verde.
+- `make run_blargg`: **15/15**.
+- `make run_mts`: **42/42**.
+- PPU acceptance manual: **12/12**.
+- `make run_regress`: **11 ROMs / 990 frames, all match**.
+- BIOS: **7 ROMs / 2800 frames, all match**.
+
+
+---
+
+## 141. SESIÓN 2026-11-19 — Captura en el README
+
+- Añadida `assets/screenshot_01.png` al README en la sección `Screenshot`.
+- La captura muestra QtreGB ejecutando un juego de Game Boy; los gráficos del
+  juego siguen perteneciendo a su autor.
+- `assets/LICENSE` y `assets/LICENSE.es.md` documentan esa excepción: la
+  captura no se dedica a CC0 por contener arte de un juego de terceros.
+- Los paquetes copian la captura a `usr/share/QtreGB/assets` y a la
+  documentación (`usr/share/doc/qtrebg/assets`) para que el README del paquete
+  también la resuelva.
+- Release assets regenerados:
+  - `qtrebg_0.9.0_amd64.deb`
+    `497f35326b4fe188d017af671a5d1325e642feb3137f3582d6f2e0d8756480ff`
+  - `QtreGB-0.9.0-x86_64.AppImage`
+    `b7a3e9b059f0182ef0cb303f9d79ddbaf00417dadc278aa8d8aeb2f1aaa53305`

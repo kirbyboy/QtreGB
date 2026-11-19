@@ -1,0 +1,34 @@
+# Software Information
+display_name = "Nintendo - Game Boy (QtreGB)"
+authors = "QtreGB contributors"
+supported_extensions = "gb"
+corename = "QtreGB"
+license = "GPLv3+"
+permissions = ""
+display_version = "0.1"
+categories = "Emulator"
+
+# Hardware Information
+manufacturer = "Nintendo"
+systemname = "Game Boy"
+systemid = "game_boy"
+
+# Libretro Features
+supports_no_game = "false"
+database = "Nintendo - Game Boy"
+savestate = "true"
+savestate_features = "deterministic"
+input_descriptors = "true"
+memory_descriptors = "false"
+libretro_saves = "true"
+core_options = "false"
+hw_render = "false"
+
+# BIOS / Firmware
+firmware_count = 1
+firmware0_desc = "dmg_boot.bin (Game Boy Boot ROM)"
+firmware0_path = "dmg_boot.bin"
+firmware0_opt = "true"
+notes = "(!) dmg_boot.bin (md5): 32fbbd84168d3482956eb3c5051637f5"
+
+description = "QtreGB is a DMG Game Boy emulator with a micro-op CPU and a dot-driven PPU. This first libretro core is single-player, supports .gb content, 160x144 XRGB8888 video, 48 kHz stereo audio, core savestates and battery-backed save RAM."

@@ -10,7 +10,12 @@ both are the only implementations — there are no selection flags.
   Para un build sin optimizar: `make clean && make GUI_DEBUG=1`.
   Para desactivar LTO: `make clean && make LTO_FLAGS=`.
   Para la traza `CPUEVT` de desarrollo: `make clean && make QTR_IRQDBG=1`.
-- `make run_tests` → doctest suite in `tests/` (253 cases, 4209 assertions).
+- `make deps` → descarga/compila ImGui y doctest en `lib/` (primera vez).
+- `make libretro` → `build/qtrebg_libretro.so` (wrapper libretro, sin SDL/ImGui).
+- `make deb` → `build/qtrebg_<version>_<arch>.deb`; `make appimage` →
+  `build/QtreGB-<version>-x86_64.AppImage`; `make release-assets` genera ambos
+  y `SHA256SUMS`.
+- `make run_tests` → doctest suite in `tests/` (254 cases, 4227 assertions).
 - `make run_blargg` (15) · `make run_mts` (42).
 - PPU acceptance ROMs are **not** wired into `mts/Makefile`; run them manually:
   `./build/mts_runner vendor/mts/*/acceptance/ppu/*.gb` → 12/12.
@@ -99,7 +104,9 @@ both are the only implementations — there are no selection flags.
   LCD-grid overlay and configurable ghosting. LCD grid is drawn in screen
   space with ImGui, only when the effective scale is at least 2×; the GUI's
   `Graphics` menu edits the settings and `QtreGB.ini` stores them under
-  `[graphics]`.
+  `[graphics]`. The default present mode is `Monitor` (vsync-driven); `Game
+  Boy` forces a 59.7275 Hz sleep and is intended for VRR/custom-refresh
+  displays.
 - `gui/inc/input_settings.h` + `gui/src/input_settings.cpp`: input data model.
   A player has one device (`None`, `Keyboard` or a controller GUID) and eight
   Game Boy bindings. Controls are encoded as `key:<SDL scancode>`,
@@ -205,6 +212,29 @@ both are the only implementations — there are no selection flags.
   `run_emulated_frame()`; `EmulatorFrontend::draw_main_status_bar()` prints
   `FPS: --` until the first window closes and drops back to `--` after one
   second without frames (LCD off).
+- Guardado de batería: `Cart` marca `battery_dirty` en escrituras y al cargar
+  savestates; `Cart::save_battery_ram` escribe `<rom>.sav.tmp` y hace
+  `rename` atómico. `EmulatorFrontend::poll_battery_autosave()` vacía los
+  cartuchos sucios cada 60 s; también se guarda al salir, cambiar de ROM,
+  resetear o cambiar la carpeta de batería. No se reescribe si no hay cambios.
+- `scripts/bootstrap_deps.sh` + `scripts/deps/imgui.Makefile`: ImGui
+  v1.92.4-docking y doctest v2.4.12 en `lib/`; ImGuiFileDialog se compila desde
+  `third_party/ImGuiFileDialog`. `lib/` sigue ignorado por Git.
+- `.github/workflows/ci.yml`: compila, ejecuta tests, construye el core
+  libretro y genera `.deb`/AppImage como artefactos.
+- `packaging/RELEASE_NOTES_0.9.0.md`: notas de la primera versión empaquetada.
+- `gui/inc/version.h`: `QTREGB_VERSION` (0.9.0 antes de la 1.0). `main` acepta
+  `--help`, `--version` y una ROM posicional; `%f` del `.desktop` arranca un
+  juego de un solo jugador. `Help → About QtreGB...` muestra el icono
+  `assets/QtreGB_icon_generic_256.png`, versión, licencia y enlaces.
+- `gui/src/stb_image_impl.cpp`: implementación de `stb_image` usada solo para
+  cargar el logo del About; el resto del proyecto no usa thumbnails de
+  ImGuiFileDialog.
+- `packaging/`: `.desktop`, icono 256×256, metainfo AppStream, scripts
+  `build_deb.sh`, `build_appimage.sh`, `build_release_assets.sh` y
+  `deb/postinst`/`postrm`. El `.deb` instala binario en `/usr/bin/QtreGB`,
+  assets/lang en `/usr/share/QtreGB`, desktop/icon/metainfo y documentación.
+  La versión de los paquetes se lee de `gui/inc/version.h`.
 - `gui/src/main.cpp`: vsync-aware frame pacer. Emulation runs at the Game Boy
   rate (70224 T-cycles per frame, 59.7275 Hz), independent of the monitor.
   If SDL present actually blocks for the monitor refresh, the display drives
@@ -215,14 +245,22 @@ both are the only implementations — there are no selection flags.
 - The DocBoy PPU oracle was removed after reaching parity; it remains in Git
   history (`wip/ppu`, tag `ppu-oracle-25-0-8`).
 
-## libretro (siguiente tarea)
-- `libretro/Makefile` es un placeholder sin targets. La primera versión será
-  DMG `.gb`, single-player, RTC con el comportamiento actual y estados con el
-  blob del core. `retro_serialize_size` reservará **320 KiB** (doble del peor
-  caso conservador). El Link Cable queda fuera.
+## libretro
+- `libretro/libretro.cpp` + `libretro/libretro.h` + `libretro/Makefile`:
+  primera versión funcional del core, `make libretro` →
+  `build/qtrebg_libretro.so`. Makefile independiente: no incluye `common.mk`
+  ni enlaza SDL/ImGui. DMG `.gb`, single-player, XRGB8888 160×144,
+  48 kHz estéreo, RetroPad, estados con el blob del core (`320 KiB` de buffer)
+  y save RAM vía `RETRO_MEMORY_SAVE_RAM`. Publica
+  `SET_INPUT_DESCRIPTORS`/`SET_CONTROLLER_INFO` para el menú de controles de
+  RetroArch. RTC con el comportamiento actual;
+  Link Cable, paleta configurable y opciones quedan para después. `libretro.h`
+  es la cabecera oficial MIT de libretro. `qtrebg_libretro.info` describe el
+  core para RetroArch; `make -C libretro install` copia `.so` + `.info` a
+  `~/.config/retroarch/cores` (override con `RETROARCH_CORES`).
 - `libretro/screen-test/` está ignorada por Git: solo para probar localmente
   una simulación de pantalla física (shader o post-proceso), nunca para
-  commitear.
+  commitear. Incluye el clon de Retro Display Lab y los packs generados.
 
 ## PPU screenshot harness
 - `MTS_FRAME_OUT=<file.pgm> ./build/mts_runner <rom.gb>` — dumps the first frame
@@ -231,19 +269,9 @@ both are the only implementations — there are no selection flags.
 - `MTS_FRAME_DELAY=N` skips N frames; `MTS_TRACE=1` enables tracing.
 - Framebuffer: `PPU::m_video_buffer`, pixel `(x,y)` at index `y*160 + x`.
 
-## Copia de seguridad de código (OBLIGATORIO al iniciar sesión / leer un handoff)
-- Carpeta local: `tmp/` (ignorada por Git; no se commitea).
-- Al leer un handoff (`documentation/Game Boy/*.md`), crear una copia de `core/`,
-  `gui/`, `mts/`, `tests/`, `common.mk` y Makefiles en `tmp/<YYYYMMDD_HHMMSS>/`
-  (sin `build/`, `obj/`, `deps/`, `lib/`, `vendor/`).
-- Comando de referencia:
-  `mkdir -p tmp/$(date +%Y%m%d_%H%M%S) && rsync -a --exclude=build --exclude=obj --exclude=deps --exclude=lib --exclude=vendor --exclude=tmp core gui mts tests common.mk Makefile tmp/$(date +%Y%m%d_%H%M%S)/`
-- Registrar la fecha creada en esta sección o en el handoff.
-
 ## Flujo seguro (sin Git destructivo)
 - **Nunca** usar `git stash`, `git reset --hard`, `git checkout --`, `git restore`
   ni `git clean -fdx`.
-- Antes de editar un fichero sensible:
-  `cp core/src/ppu.cpp tmp/ppu.cpp.pre-edit` (equivalente para `timer.cpp`).
-- Deshacer: `cp tmp/ppu.cpp.pre-edit core/src/ppu.cpp`.
+- No se hacen copias periódicas en `tmp/`; el código vive en el árbol de
+  trabajo y en Git. Para revisar cambios, usar `git diff`/`git status`.
 - Commits solo si el usuario lo pide explícitamente, con build + tests verdes.

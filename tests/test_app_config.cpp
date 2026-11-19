@@ -37,7 +37,7 @@ TEST_CASE("AppConfig: missing file keeps defaults")
 	CHECK_FALSE(config.display.lcd_grid);
 	CHECK(config.display.integer_scaling);
 	CHECK(config.display.grid_opacity == 100);
-	CHECK(config.display.present_mode == PresentMode::Auto);
+	CHECK(config.display.present_mode == PresentMode::Monitor);
 	CHECK((config.display.background == Rgb {0, 0, 0}));
 	CHECK(config.audio.enabled);
 	CHECK(config.audio.volume == 50);

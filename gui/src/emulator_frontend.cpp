@@ -14,6 +14,8 @@
 #include "file_dialog_i18n.h"
 #include "i18n.h"
 #include "state_stream.h"
+#include "stb/stb_image.h"
+#include "version.h"
 
 using namespace qtreGB;
 using namespace std;
@@ -297,6 +299,25 @@ bool EmulatorFrontend::fast_forward_active() const
 	return m_input_manager.shortcut_held(ShortcutAction::FastForward);
 }
 
+void EmulatorFrontend::poll_battery_autosave()
+{
+	const double now = monotonic_seconds();
+	if(m_next_battery_autosave <= 0.0)
+	{
+		m_next_battery_autosave = now + 60.0;
+		return;
+	}
+	if(now < m_next_battery_autosave)
+	{
+		return;
+	}
+	m_next_battery_autosave = now + 60.0;
+	for(const auto& instance : m_instances)
+	{
+		instance->save_battery_now();
+	}
+}
+
 void EmulatorFrontend::record_emulated_frame()
 {
 	m_fps.add_frame(monotonic_seconds());
@@ -517,6 +538,11 @@ void EmulatorFrontend::draw_main_status_bar()
 EmulatorFrontend::~EmulatorFrontend()
 {
 	destroy_state_previews();
+	if(m_backend && m_about_logo_texture)
+	{
+		m_backend->destroyTexture(m_about_logo_texture);
+		m_about_logo_texture = nullptr;
+	}
 	if(m_backend && m_combined_texture)
 	{
 		m_backend->destroyTexture(m_combined_texture);
@@ -963,6 +989,14 @@ void EmulatorFrontend::draw_main_window()
 			ImGui::EndMenu();
 		}
 
+		if(ImGui::BeginMenu(i18n::tr("Help")))
+		{
+			if(ImGui::MenuItem(i18n::tr("About QtreGB...")))
+			{
+				m_open_about_popup = true;
+			}
+			ImGui::EndMenu();
+		}
 
 		ImGui::EndMenuBar();
 	}
@@ -1136,6 +1170,7 @@ void EmulatorFrontend::draw_main_window()
 		m_open_custom_palette = false;
 	}
 	draw_custom_palette_window();
+	draw_about_window();
 
 	ImGui::End(); // End of MainWindow
 	draw_file_dialogs();
@@ -3450,5 +3485,142 @@ void EmulatorFrontend::draw_custom_palette_window()
 		m_custom_palette_edit = defaults.custom_palette;
 	}
 
+	ImGui::EndPopup();
+}
+
+void EmulatorFrontend::ensure_about_logo()
+{
+	if(m_about_logo_attempted || m_about_logo_path.empty())
+	{
+		return;
+	}
+	m_about_logo_attempted = true;
+
+	std::ifstream input(std::filesystem::u8path(m_about_logo_path),
+		std::ios::binary);
+	if(!input)
+	{
+		std::fprintf(stderr, "About logo: could not open %s\n",
+			m_about_logo_path.c_str());
+		return;
+	}
+	std::vector<unsigned char> encoded(
+		(std::istreambuf_iterator<char>(input)),
+		std::istreambuf_iterator<char>());
+	if(encoded.empty())
+	{
+		return;
+	}
+
+	int width = 0;
+	int height = 0;
+	int channels = 0;
+	unsigned char* data = stbi_load_from_memory(encoded.data(),
+		static_cast<int>(encoded.size()), &width, &height, &channels, 4);
+	if(data == nullptr || width <= 0 || height <= 0)
+	{
+		std::fprintf(stderr, "About logo: could not decode %s\n",
+			m_about_logo_path.c_str());
+		stbi_image_free(data);
+		return;
+	}
+
+	std::vector<std::uint32_t> pixels(
+		static_cast<size_t>(width) * static_cast<size_t>(height));
+	for(size_t i = 0; i < pixels.size(); ++i)
+	{
+		pixels[i] = (static_cast<std::uint32_t>(data[i * 4 + 0]) << 24) |
+			(static_cast<std::uint32_t>(data[i * 4 + 1]) << 16) |
+			(static_cast<std::uint32_t>(data[i * 4 + 2]) << 8) |
+			static_cast<std::uint32_t>(data[i * 4 + 3]);
+	}
+	stbi_image_free(data);
+
+	if(m_backend == nullptr)
+	{
+		return;
+	}
+	void* texture = m_backend->createTexture(width, height);
+	if(texture == nullptr)
+	{
+		return;
+	}
+	m_backend->updateTexture(texture, pixels.data(), width, height);
+	m_about_logo_texture = texture;
+	m_about_logo_width = width;
+	m_about_logo_height = height;
+}
+
+void EmulatorFrontend::draw_about_window()
+{
+	if(m_open_about_popup)
+	{
+		const ImGuiViewport* viewport = ImGui::GetMainViewport();
+		ImGui::SetNextWindowPos(
+			ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+				viewport->Pos.y + viewport->Size.y * 0.5f),
+			ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		const std::string title =
+			std::string(i18n::tr("About QtreGB")) + "###About";
+		ImGui::OpenPopup(title.c_str());
+		m_open_about_popup = false;
+	}
+
+	const std::string modal_title =
+		std::string(i18n::tr("About QtreGB")) + "###About";
+	if(!ImGui::BeginPopupModal(modal_title.c_str(), nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		return;
+	}
+
+	ensure_about_logo();
+	if(m_about_logo_texture != nullptr)
+	{
+		const float max_logo = 160.0f;
+		const float largest = static_cast<float>(
+			std::max(m_about_logo_width, m_about_logo_height));
+		const float scale = largest > 0.0f ?
+			std::min(1.0f, max_logo / largest) : 1.0f;
+		const ImVec2 logo_size(
+			static_cast<float>(m_about_logo_width) * scale,
+			static_cast<float>(m_about_logo_height) * scale);
+		const float available = ImGui::GetContentRegionAvail().x;
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+			std::max(0.0f, (available - logo_size.x) * 0.5f));
+		ImGui::Image(m_about_logo_texture, logo_size);
+		ImGui::Spacing();
+	}
+
+	const auto centered_text = [](const char* text)
+	{
+		const float text_width = ImGui::CalcTextSize(text).x;
+		const float available = ImGui::GetContentRegionAvail().x;
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+			std::max(0.0f, (available - text_width) * 0.5f));
+		ImGui::TextUnformatted(text);
+	};
+
+	centered_text("QtreGB");
+	const std::string version =
+		i18n::format("Version %s", QTREGB_VERSION);
+	centered_text(version.c_str());
+	centered_text(i18n::tr("Made by kirbyboy"));
+	ImGui::Separator();
+	ImGui::TextUnformatted(
+		i18n::tr("Copyright (C) 2026 the QtreGB project"));
+	ImGui::TextUnformatted(i18n::tr(
+		"License: GNU General Public License v3.0 or later"));
+	ImGui::TextDisabled("%s", i18n::tr("Code: GPL-3.0-or-later"));
+	ImGui::TextDisabled("%s", i18n::tr("Visual assets: CC0 1.0"));
+	ImGui::TextDisabled("%s",
+		i18n::format("Build: %s", QTREGB_BUILD_VERSION).c_str());
+	ImGui::TextDisabled("https://www.gnu.org/licenses/gpl-3.0.html");
+	ImGui::TextDisabled("https://github.com/kirbyboy/QtreGB");
+	ImGui::Spacing();
+	if(ImGui::Button(i18n::tr("Close")))
+	{
+		ImGui::CloseCurrentPopup();
+	}
 	ImGui::EndPopup();
 }

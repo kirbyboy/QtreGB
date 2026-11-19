@@ -98,6 +98,15 @@ stb_image and stb_image_resize2 are included by ImGuiFileDialog for image
 loading and resizing. stb_image_write is used by QtreGB to embed the preview
 image in savestate files.
 
+### libretro API header
+
+libretro.h
+Copyright (C) 2010-2024 The RetroArch team
+MIT License
+
+Used by the `libretro/` core wrapper. The full MIT text is included at the top
+of `libretro/libretro.h`.
+
 ### doctest
 
 doctest v2.4.12

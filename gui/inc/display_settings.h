@@ -50,7 +50,7 @@ struct DisplaySettings
 	bool integer_scaling = true;
 	bool lcd_grid = false;
 	int grid_opacity = 100;
-	PresentMode present_mode = PresentMode::Auto;
+	PresentMode present_mode = PresentMode::Monitor;
 	static constexpr int kMaxGhostingMs = 150;
 
 	bool ghosting = false;

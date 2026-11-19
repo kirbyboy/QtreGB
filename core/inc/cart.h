@@ -34,6 +34,9 @@ class Cart
 		const std::vector<u8>& rom() const;
 
 		bool has_battery() const { return m_has_battery; }
+		// True when cartridge RAM/RTC may have changed since the last save.
+		bool battery_dirty() const { return m_battery_dirty; }
+		void mark_battery_dirty() { m_battery_dirty = true; }
 		// Mapper detected from the cartridge header.
 		CartMapper mapper() const;
 
@@ -65,6 +68,7 @@ class Cart
 		InternalCart* m_internal;
 		ErrorReporter* m_errors = nullptr;
 		bool m_has_battery = false;
+		bool m_battery_dirty = false;
 		std::function<int64_t()> m_rtc_now;
 
 };

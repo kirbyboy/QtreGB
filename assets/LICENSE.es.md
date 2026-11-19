@@ -21,6 +21,11 @@ Esta dedicatoria cubre actualmente el icono y logotipo de la aplicación:
 
 - `assets/QtreGB_icon_generic_256.png`.
 
+Excepción: `assets/screenshot_01.png` es una captura de documentación que
+incluye gráficos de un juego de Game Boy de terceros. Esos gráficos no se
+dedican a CC0 y siguen perteneciendo a su autor. La captura se incluye solo
+para documentar QtreGB.
+
 ## Procedencia del icono de la aplicación
 
 El icono de la aplicación se creó para el proyecto QtreGB en 2026. Según el

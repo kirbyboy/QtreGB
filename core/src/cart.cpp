@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <utility>
@@ -159,6 +160,7 @@ u8 Cart::load_cart(std::vector<u8> rom)
 	}
 	m_internal = internal;
 	m_has_battery = has_battery;
+	m_battery_dirty = false;
 
 	return 0;
 }
@@ -173,6 +175,10 @@ void Cart::write(u16 address, u8 value)
 {
 	if(m_internal == nullptr) return;
 	m_internal->write(address, value);
+	if(m_has_battery)
+	{
+		m_battery_dirty = true;
+	}
 }
 
 const std::vector<u8>& Cart::rom() const
@@ -234,7 +240,15 @@ bool Cart::load_state(StateReader& reader)
 	{
 		return false;
 	}
-	return reader.end_chunk();
+	if(!reader.end_chunk())
+	{
+		return false;
+	}
+	if(m_has_battery)
+	{
+		m_battery_dirty = true;
+	}
+	return true;
 }
 
 std::string Cart::battery_save_path(const std::string& rom_path)
@@ -270,6 +284,10 @@ bool Cart::write_battery_ram(const std::vector<u8>& data)
 		return false;
 	}
 	m_internal->load_battery_data(data);
+	if(m_has_battery)
+	{
+		m_battery_dirty = true;
+	}
 	return true;
 }
 
@@ -294,7 +312,7 @@ void Cart::set_rtc_clock(std::function<int64_t()> now)
 
 bool Cart::save_battery_ram(const std::string& path)
 {
-	if(!m_has_battery || m_internal == nullptr)
+	if(!m_has_battery || m_internal == nullptr || path.empty())
 	{
 		return false;
 	}
@@ -305,14 +323,43 @@ bool Cart::save_battery_ram(const std::string& path)
 		return false;
 	}
 
-	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	const std::filesystem::path target = std::filesystem::u8path(path);
+	std::error_code error;
+	if(target.has_parent_path())
+	{
+		std::filesystem::create_directories(target.parent_path(), error);
+		if(error)
+		{
+			return false;
+		}
+	}
+
+	std::filesystem::path temporary = target;
+	temporary += ".tmp";
+	std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
 	if(!out)
 	{
 		return false;
 	}
 	out.write(reinterpret_cast<const char*>(data.data()),
 		static_cast<std::streamsize>(data.size()));
-	return out.good();
+	out.flush();
+	if(!out)
+	{
+		out.close();
+		std::filesystem::remove(temporary, error);
+		return false;
+	}
+	out.close();
+
+	std::filesystem::rename(temporary, target, error);
+	if(error)
+	{
+		std::filesystem::remove(temporary, error);
+		return false;
+	}
+	m_battery_dirty = false;
+	return true;
 }
 
 bool Cart::load_battery_ram(const std::string& path)
@@ -322,7 +369,7 @@ bool Cart::load_battery_ram(const std::string& path)
 		return false;
 	}
 
-	std::ifstream in(path, std::ios::binary);
+	std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
 	if(!in)
 	{
 		return false;
@@ -334,5 +381,10 @@ bool Cart::load_battery_ram(const std::string& path)
 	{
 		return false;
 	}
-	return write_battery_ram(data);
+	const bool loaded = write_battery_ram(data);
+	if(loaded)
+	{
+		m_battery_dirty = false;
+	}
+	return loaded;
 }

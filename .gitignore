@@ -3,6 +3,12 @@
 *.tmp
 
 imgui.ini
+QtreGB.ini
+QtreGB.ini.tmp
+
+# Librería vendorizada: solo se ignora su build generado
+third_party/ImGuiFileDialog/build/
+third_party/ImGuiFileDialog/libImGuiFileDialog.a
 
 # Compilados
 /build/
@@ -43,3 +49,12 @@ Thumbs.db
 tmp/
 
 /temp/
+
+# Pruebas locales de la simulación de pantalla física (no se commitea)
+/libretro/screen-test/
+
+# Estado local de herramientas de desarrollo (OpenCode / SDL-MCP)
+/.sdl-mcp/
+/OPENCODE.md
+/SDL.md
+/opencode-mcp-config.json

@@ -452,6 +452,11 @@ void EmulatorInstance::save_battery()
 	{
 		return;
 	}
+	if(!m_machine->m_cart.has_battery() ||
+	   !m_machine->m_cart.battery_dirty())
+	{
+		return;
+	}
 	m_machine->m_cart.save_battery_ram(battery_path());
 }
 
