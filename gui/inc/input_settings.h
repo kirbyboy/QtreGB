@@ -68,6 +68,9 @@ enum class ShortcutAction : qtreGB::u8
 	Fullscreen = 0,
 	SaveState,
 	LoadState,
+	NextStateSlot,
+	PreviousStateSlot,
+	FastForward,
 	Count,
 };
 
@@ -79,8 +82,11 @@ struct Shortcut
 
 struct InputSettings
 {
+	static constexpr size_t ShortcutCount =
+		static_cast<size_t>(ShortcutAction::Count);
+
 	std::array<PlayerInputSettings, 2> players;
-	std::array<Shortcut, 3> shortcuts;
+	std::array<Shortcut, ShortcutCount> shortcuts;
 	bool allow_opposite_directions = false;
 
 	static InputSettings defaults();

@@ -22,7 +22,7 @@ $(OBJDIR)/blargg/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)/blargg $(DEPDIR)/blargg
 	$(CXX) -c $(CFLAGS) -MMD -MP -MF $(DEPDIR)/blargg/$*.d -o $@ $<
 
 $(BUILDDIR)/blargg_runner: $(OBJS) $(BUILDDIR)/libqtrebgcore_opt.a | $(BUILDDIR)
-	$(CXX) -o $@ $(OBJS) $(BUILDDIR)/libqtrebgcore_opt.a
+	$(CXX) $(LTO_FLAGS) -o $@ $(OBJS) $(BUILDDIR)/libqtrebgcore_opt.a
 
 $(OBJDIR)/blargg $(DEPDIR)/blargg $(BUILDDIR):
 	mkdir -p $@

@@ -28,6 +28,7 @@ clean:
 	$(MAKE) --no-print-directory -C mts clean
 	$(MAKE) --no-print-directory -C blargg clean
 	$(MAKE) --no-print-directory -C regress clean
+	$(MAKE) --no-print-directory -C third_party/ImGuiFileDialog clean
 	$(RM) -r $(OBJDIR) $(DEPDIR) $(BUILDDIR)
 
 .PHONY: all clean run_tests run_mts run_blargg run_regress update_regress

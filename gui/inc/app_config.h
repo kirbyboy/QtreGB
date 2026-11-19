@@ -5,7 +5,10 @@
 
 #include "audio_settings.h"
 #include "display_settings.h"
+#include "emulation_settings.h"
 #include "input_settings.h"
+#include "path_settings.h"
+#include "recent_files.h"
 
 // Small, human-readable application configuration stored outside the
 // installation directory. The format is INI-like:
@@ -43,7 +46,12 @@ class AppConfig
 		bool window_maximized = false;
 		DisplaySettings display;
 		AudioSettings audio;
+		FastForwardSpeed fast_forward_speed = FastForwardSpeed::X200;
 		InputSettings input = InputSettings::defaults();
+		// "system", "en" or "es".
+		std::string language = "system";
+		PathSettings paths;
+		RecentFiles recent_roms;
 };
 
 #endif

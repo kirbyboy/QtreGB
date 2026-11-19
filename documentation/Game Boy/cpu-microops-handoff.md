@@ -403,7 +403,8 @@ defecto sigue verde.
 
 ## 15. PPU/IRQ: STAT no se dispara con el CPU micro
 
-Traza `QTR_IRQDBG` sobre `m3_bgp_change` con BIOS:
+Traza `CPUEVT` (`make clean && make QTR_IRQDBG=1`) sobre `m3_bgp_change`
+con BIOS:
 
 Base:
 - VBlank IRQ dot=453 LY=144 mode=0.

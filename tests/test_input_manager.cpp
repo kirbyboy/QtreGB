@@ -196,3 +196,66 @@ TEST_CASE("Input manager: rebinding a shortcut to a held key does not fire it")
 	manager.update();
 	CHECK(manager.consume_shortcut(ShortcutAction::SaveState));
 }
+
+TEST_CASE("Input manager: UI blocking suppresses game input and shortcuts")
+{
+	InputManager manager;
+	manager.set_settings(InputSettings::defaults());
+	manager.set_ui_blocked(true);
+
+	send_key(manager, SDL_SCANCODE_Z, true);
+	send_key(manager, SDL_SCANCODE_F5, true);
+	manager.update();
+	CHECK_FALSE(manager.player_pressed(0, GbButton::A));
+	CHECK_FALSE(manager.consume_shortcut(ShortcutAction::SaveState));
+
+	send_key(manager, SDL_SCANCODE_Z, false);
+	send_key(manager, SDL_SCANCODE_F5, false);
+	manager.set_ui_blocked(false);
+	manager.update();
+
+	send_key(manager, SDL_SCANCODE_Z, true);
+	send_key(manager, SDL_SCANCODE_F5, true);
+	manager.update();
+	CHECK(manager.player_pressed(0, GbButton::A));
+	CHECK(manager.consume_shortcut(ShortcutAction::SaveState));
+}
+
+TEST_CASE("Input manager: state slot shortcuts are edge-triggered")
+{
+	InputManager manager;
+	manager.set_settings(InputSettings::defaults());
+
+	send_key(manager, SDL_SCANCODE_PAGEUP, true);
+	manager.update();
+	CHECK(manager.consume_shortcut(ShortcutAction::NextStateSlot));
+	CHECK_FALSE(manager.consume_shortcut(ShortcutAction::NextStateSlot));
+	manager.update();
+	CHECK_FALSE(manager.consume_shortcut(ShortcutAction::NextStateSlot));
+
+	send_key(manager, SDL_SCANCODE_PAGEUP, false);
+	send_key(manager, SDL_SCANCODE_PAGEDOWN, true);
+	manager.update();
+	CHECK(manager.consume_shortcut(ShortcutAction::PreviousStateSlot));
+	CHECK_FALSE(manager.consume_shortcut(ShortcutAction::NextStateSlot));
+}
+
+
+TEST_CASE("Input manager: fast forward is held, not edge-triggered")
+{
+	InputManager manager;
+	manager.set_settings(InputSettings::defaults());
+
+	send_key(manager, SDL_SCANCODE_SPACE, true);
+	manager.update();
+	CHECK(manager.shortcut_held(ShortcutAction::FastForward));
+	CHECK(manager.consume_shortcut(ShortcutAction::FastForward));
+
+	manager.update();
+	CHECK(manager.shortcut_held(ShortcutAction::FastForward));
+	CHECK_FALSE(manager.consume_shortcut(ShortcutAction::FastForward));
+
+	send_key(manager, SDL_SCANCODE_SPACE, false);
+	manager.update();
+	CHECK_FALSE(manager.shortcut_held(ShortcutAction::FastForward));
+}

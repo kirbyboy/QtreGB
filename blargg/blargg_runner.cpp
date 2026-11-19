@@ -75,15 +75,9 @@ std::string basename_of(const std::string& path)
 // at $A001-$A003, final code at $A000 and text at $A004 (test readme).
 std::string build_diagnostics(QtreGB& emu)
 {
-	TaggedSerializer state_out(TaggedSerializer::Mode::Write);
-	emu.m_cpu.serialize(state_out);
-	CpuState state;
-	TaggedSerializer state_in(TaggedSerializer::Mode::Read, state_out.data());
-	state.serialize(state_in);
-
 	std::ostringstream out;
 	out << "PC=0x" << std::hex << std::setw(4) << std::setfill('0')
-	    << state.pc
+	    << emu.m_cpu.get_pc()
 	    << " IF=0x" << std::setw(2) << unsigned(emu.m_bus.read(0xFF0F) & 0x1F)
 	    << " IE=0x" << std::setw(2) << unsigned(emu.m_bus.read(0xFFFF))
 	    << " TIMA=0x" << std::setw(2) << unsigned(emu.m_bus.read(0xFF05))
@@ -140,6 +134,12 @@ TestResult run_rom(const std::vector<u8>& rom, long max_cycles, const std::vecto
 		if(prev_sc != 0x81 && sc == 0x81)
 		{
 			result.serial.push_back(static_cast<char>(emu.m_bus.read(SB_ADDR)));
+
+			// The core has no serial peer/link implementation. The blargg
+			// shell waits for the internal-clock transfer to finish, so the
+			// test runner acknowledges it here instead of keeping a
+			// test-specific serial hack inside QtreGB.
+			emu.m_bus.write(SC_ADDR, 0x00);
 
 			if(result.serial.find("Passed") != std::string::npos)
 			{

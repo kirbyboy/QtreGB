@@ -154,6 +154,7 @@ AppConfig AppConfig::load(const std::string& path)
 	}
 
 	std::string section;
+	std::array<std::string, RecentFiles::MaxEntries> recent_slots {};
 	std::string line;
 	while(std::getline(input, line))
 	{
@@ -311,6 +312,78 @@ AppConfig AppConfig::load(const std::string& path)
 				config.audio.volume = number;
 			}
 		}
+		else if(full_key == "audio.link_source")
+		{
+			const std::string source = lowercase(trim(value));
+			LinkAudioSource parsed = config.audio.link_source;
+			if(parse_link_audio_source(source, parsed))
+			{
+				config.audio.link_source = parsed;
+			}
+		}
+		else if(full_key == "emulation.fast_forward_speed")
+		{
+			const std::string speed = lowercase(trim(value));
+			FastForwardSpeed parsed = config.fast_forward_speed;
+			if(parse_fast_forward_speed(speed, parsed))
+			{
+				config.fast_forward_speed = parsed;
+			}
+		}
+		else if(full_key == "ui.language")
+		{
+			const std::string language = lowercase(trim(value));
+			if(language == "system" || language == "en" || language == "es")
+			{
+				config.language = language;
+			}
+		}
+		else if(full_key == "paths.roms")
+		{
+			config.paths.roms = value;
+		}
+		else if(full_key == "paths.bios")
+		{
+			config.paths.bios = value;
+		}
+		else if(full_key == "paths.battery")
+		{
+			config.paths.battery = value;
+		}
+		else if(full_key == "paths.savestates")
+		{
+			config.paths.savestates = value;
+		}
+		else if(full_key == "paths.screenshots")
+		{
+			config.paths.screenshots = value;
+		}
+		else if(full_key == "paths.battery_same_as_rom")
+		{
+			bool enabled = config.paths.battery_same_as_rom;
+			if(parse_bool(value, enabled))
+			{
+				config.paths.battery_same_as_rom = enabled;
+			}
+		}
+		else if(full_key == "paths.savestates_same_as_rom")
+		{
+			bool enabled = config.paths.savestates_same_as_rom;
+			if(parse_bool(value, enabled))
+			{
+				config.paths.savestates_same_as_rom = enabled;
+			}
+		}
+		else if(full_key.rfind("recent.", 0) == 0)
+		{
+			int index = 0;
+			if(parse_int(full_key.substr(7), index) && index >= 1 &&
+			   index <= static_cast<int>(RecentFiles::MaxEntries) &&
+			   !value.empty())
+			{
+				recent_slots[static_cast<size_t>(index - 1)] = value;
+			}
+		}
 		else if(full_key == "input.allow_opposite_directions")
 		{
 			bool enabled = config.input.allow_opposite_directions;
@@ -389,6 +462,60 @@ AppConfig AppConfig::load(const std::string& path)
 				config.input.shortcuts[2].controller = control;
 			}
 		}
+		else if(full_key == "shortcuts.next_state_slot_key")
+		{
+			HostControl control;
+			if(InputSettings::parse_control(value, control) &&
+			   (control.type == HostControlType::Key || control.is_none()))
+			{
+				config.input.shortcuts[3].keyboard = control;
+			}
+		}
+		else if(full_key == "shortcuts.next_state_slot_controller")
+		{
+			HostControl control;
+			if(InputSettings::parse_control(value, control) &&
+			   (control.type != HostControlType::Key || control.is_none()))
+			{
+				config.input.shortcuts[3].controller = control;
+			}
+		}
+		else if(full_key == "shortcuts.previous_state_slot_key")
+		{
+			HostControl control;
+			if(InputSettings::parse_control(value, control) &&
+			   (control.type == HostControlType::Key || control.is_none()))
+			{
+				config.input.shortcuts[4].keyboard = control;
+			}
+		}
+		else if(full_key == "shortcuts.previous_state_slot_controller")
+		{
+			HostControl control;
+			if(InputSettings::parse_control(value, control) &&
+			   (control.type != HostControlType::Key || control.is_none()))
+			{
+				config.input.shortcuts[4].controller = control;
+			}
+		}
+		else if(full_key == "shortcuts.fast_forward_key")
+		{
+			HostControl control;
+			if(InputSettings::parse_control(value, control) &&
+			   (control.type == HostControlType::Key || control.is_none()))
+			{
+				config.input.shortcuts[5].keyboard = control;
+			}
+		}
+		else if(full_key == "shortcuts.fast_forward_controller")
+		{
+			HostControl control;
+			if(InputSettings::parse_control(value, control) &&
+			   (control.type != HostControlType::Key || control.is_none()))
+			{
+				config.input.shortcuts[5].controller = control;
+			}
+		}
 		else if(full_key.rfind("input.p", 0) == 0)
 		{
 			const size_t underscore = full_key.find('_');
@@ -417,6 +544,15 @@ AppConfig AppConfig::load(const std::string& path)
 		}
 	}
 
+	std::vector<std::string> recent_paths;
+	for(const std::string& path : recent_slots)
+	{
+		if(!path.empty())
+		{
+			recent_paths.push_back(path);
+		}
+	}
+	config.recent_roms.set(recent_paths);
 	config.input.sanitize();
 
 	return config;
@@ -521,6 +657,35 @@ bool AppConfig::save(const std::string& path, std::string& error) const
 	output << "[audio]\n";
 	output << "enabled=" << (audio.enabled ? 1 : 0) << '\n';
 	output << "volume=" << std::clamp(audio.volume, 0, 100) << '\n';
+	output << "link_source=" << link_audio_source_name(audio.link_source)
+		<< '\n';
+	output << '\n';
+	output << "[emulation]\n";
+	output << "fast_forward_speed="
+		<< fast_forward_speed_name(fast_forward_speed) << '\n';
+	output << '\n';
+	const std::string clean_language =
+		(language == "en" || language == "es") ? language : "system";
+	output << "[ui]\n";
+	output << "language=" << clean_language << '\n';
+	output << '\n';
+	output << "[paths]\n";
+	output << "roms=" << paths.roms << '\n';
+	output << "bios=" << paths.bios << '\n';
+	output << "battery=" << paths.battery << '\n';
+	output << "savestates=" << paths.savestates << '\n';
+	output << "screenshots=" << paths.screenshots << '\n';
+	output << "battery_same_as_rom="
+		<< (paths.battery_same_as_rom ? 1 : 0) << '\n';
+	output << "savestates_same_as_rom="
+		<< (paths.savestates_same_as_rom ? 1 : 0) << '\n';
+	output << '\n';
+	output << "[recent]\n";
+	const std::vector<std::string>& recent = recent_roms.paths();
+	for(size_t i = 0; i < recent.size(); ++i)
+	{
+		output << (i + 1) << '=' << recent[i] << '\n';
+	}
 	output << '\n';
 	InputSettings clean_input = input;
 	clean_input.sanitize();

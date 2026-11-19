@@ -34,6 +34,8 @@ class Cart
 		const std::vector<u8>& rom() const;
 
 		bool has_battery() const { return m_has_battery; }
+		// Mapper detected from the cartridge header.
+		CartMapper mapper() const;
 
 		// Path next to the ROM with the .sav extension.
 		static std::string battery_save_path(const std::string& rom_path);

@@ -38,7 +38,7 @@ bool valid_controller_control(const HostControl& control)
 }
 
 bool matches_shortcut(const HostControl& control,
-	const std::array<Shortcut, 3>& shortcuts)
+	const std::array<Shortcut, InputSettings::ShortcutCount>& shortcuts)
 {
 	for(const Shortcut& shortcut : shortcuts)
 	{
@@ -86,14 +86,20 @@ InputSettings InputSettings::defaults()
 		{HostControlType::Key, SDL_SCANCODE_F5, 0};
 	settings.shortcuts[static_cast<size_t>(ShortcutAction::LoadState)].keyboard =
 		{HostControlType::Key, SDL_SCANCODE_F8, 0};
+	settings.shortcuts[static_cast<size_t>(ShortcutAction::NextStateSlot)].keyboard =
+		{HostControlType::Key, SDL_SCANCODE_PAGEUP, 0};
+	settings.shortcuts[static_cast<size_t>(ShortcutAction::PreviousStateSlot)].keyboard =
+		{HostControlType::Key, SDL_SCANCODE_PAGEDOWN, 0};
+	settings.shortcuts[static_cast<size_t>(ShortcutAction::FastForward)].keyboard =
+		{HostControlType::Key, SDL_SCANCODE_SPACE, 0};
 
 	return settings;
 }
 
 void InputSettings::sanitize()
 {
-	std::array<HostControl, 3> keyboard_shortcuts {};
-	std::array<HostControl, 3> controller_shortcuts {};
+	std::array<HostControl, ShortcutCount> keyboard_shortcuts {};
+	std::array<HostControl, ShortcutCount> controller_shortcuts {};
 
 	for(size_t i = 0; i < shortcuts.size(); ++i)
 	{
@@ -214,6 +220,9 @@ const char* InputSettings::shortcut_name(ShortcutAction action)
 		case ShortcutAction::Fullscreen: return "Fullscreen";
 		case ShortcutAction::SaveState: return "Save state";
 		case ShortcutAction::LoadState: return "Load state";
+		case ShortcutAction::NextStateSlot: return "Next state slot";
+		case ShortcutAction::PreviousStateSlot: return "Previous state slot";
+		case ShortcutAction::FastForward: return "Fast forward";
 		case ShortcutAction::Count: break;
 	}
 	return "?";

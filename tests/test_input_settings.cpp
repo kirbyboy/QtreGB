@@ -18,6 +18,12 @@ TEST_CASE("Input settings: defaults use the keyboard for player 1")
 		HostControl {HostControlType::Key, SDL_SCANCODE_F5, 0});
 	CHECK(settings.shortcuts[2].keyboard ==
 		HostControl {HostControlType::Key, SDL_SCANCODE_F8, 0});
+	CHECK(settings.shortcuts[3].keyboard ==
+		HostControl {HostControlType::Key, SDL_SCANCODE_PAGEUP, 0});
+	CHECK(settings.shortcuts[4].keyboard ==
+		HostControl {HostControlType::Key, SDL_SCANCODE_PAGEDOWN, 0});
+	CHECK(settings.shortcuts[5].keyboard ==
+		HostControl {HostControlType::Key, SDL_SCANCODE_SPACE, 0});
 	CHECK_FALSE(settings.allow_opposite_directions);
 }
 

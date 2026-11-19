@@ -426,12 +426,18 @@ bool InputManager::shortcut_pressed(const Shortcut& shortcut, size_t index)
 	return keyboard || controller;
 }
 
+void InputManager::set_ui_blocked(bool blocked)
+{
+	m_ui_blocked = blocked;
+}
+
 void InputManager::update()
 {
 	// While a binding is being captured, key/button presses belong to the
-	// capture, not to the game. The raw state is still tracked so axis
+	// capture, not to the game. The same applies while a file dialog or
+	// another modal UI owns the input. The raw state is still tracked so axis
 	// hysteresis and release edges stay coherent.
-	const bool suspended = capturing();
+	const bool suspended = capturing() || m_ui_blocked;
 
 	for(size_t player = 0; player < m_settings.players.size(); ++player)
 	{
@@ -499,6 +505,16 @@ bool InputManager::consume_shortcut(ShortcutAction action)
 	const bool triggered = m_shortcut_trigger[index];
 	m_shortcut_trigger[index] = false;
 	return triggered;
+}
+
+bool InputManager::shortcut_held(ShortcutAction action) const
+{
+	const size_t index = static_cast<size_t>(action);
+	if(index >= m_shortcut_previous.size() || capturing() || m_ui_blocked)
+	{
+		return false;
+	}
+	return m_shortcut_previous[index];
 }
 
 void InputManager::begin_capture(CaptureKind kind, std::string description,

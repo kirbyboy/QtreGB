@@ -10,7 +10,7 @@ both are the only implementations — there are no selection flags.
   Para un build sin optimizar: `make clean && make GUI_DEBUG=1`.
   Para desactivar LTO: `make clean && make LTO_FLAGS=`.
   Para la traza `CPUEVT` de desarrollo: `make clean && make QTR_IRQDBG=1`.
-- `make run_tests` → doctest suite in `tests/` (222 cases, 3987 assertions).
+- `make run_tests` → doctest suite in `tests/` (253 cases, 4209 assertions).
 - `make run_blargg` (15) · `make run_mts` (42).
 - PPU acceptance ROMs are **not** wired into `mts/Makefile`; run them manually:
   `./build/mts_runner vendor/mts/*/acceptance/ppu/*.gb` → 12/12.
@@ -37,8 +37,8 @@ both are the only implementations — there are no selection flags.
 - Name/logo/icon use: `TRADEMARK.md`.
 - Third-party notices: `THIRD_PARTY_NOTICES.md`.
 - `third_party/` is tracked; `lib/` is ignored. ImGuiFileDialog is vendored in
-  `third_party/ImGuiFileDialog` (MIT, with local i18n changes) but not wired
-  into the build yet.
+  `third_party/ImGuiFileDialog` (MIT, with local i18n changes) and wired into
+  the GUI build for file open/save dialogs.
 
 ## Architecture notes
 - `core/inc/cpu_micro.h` + `core/src/cpu_micro.cpp`: micro-op CPU (`CpuMicro`),
@@ -81,9 +81,19 @@ both are the only implementations — there are no selection flags.
   `SDL_GetPrefPath("Qtre", "QtreGB")` on Windows/macOS). ImGui uses
   `IniFilename = nullptr`; there is no `imgui.ini`. It stores window geometry,
   the `[graphics]` options (palette, grid, ghosting, present mode, background),
-  `[audio]` (enabled, volume; defaults enabled at 50%) and the input model in
+  `[audio]` (enabled, volume; defaults enabled at 50%), the input model in
   `[input]` / `[shortcuts]` (player devices, bindings, global shortcuts and the
-  opposite-directions flag).
+  opposite-directions flag), `[ui] language` (system, en or es), `[paths]`
+  (ROMs, BIOS, battery, save states, screenshots and the two "same as ROM"
+  flags), `[emulation] fast_forward_speed` (200, 300 or max) and `[recent]`
+  (up to 10 recent player 1 ROM paths, newest first).
+- `gui/inc/recent_files.h` + `gui/src/recent_files.cpp`: recent player 1 ROM
+  list. `remember()` moves a path to the front, removes duplicates and caps
+  the list at 10; `set()` preserves the saved order and drops empty entries.
+  Only the normal `File → Open ROM...` flow records paths. The File menu shows
+  the list between `Load state` and `Exit` with numbered basenames and the full
+  path as a tooltip; missing files are removed when selected. Link/player 2
+  ROMs and session loads never touch this list.
 - `gui/src/display_processor.cpp`: native 160×144 palette/ghosting pass.
   `DisplaySettings` exposes DMG, Pocket and custom palettes, integer scaling,
   LCD-grid overlay and configurable ghosting. LCD grid is drawn in screen
@@ -112,6 +122,89 @@ both are the only implementations — there are no selection flags.
   clears, Ctrl/Alt are rejected, Shift is allowed). Changing a player device
   clears that player's bindings; assigning a shortcut removes conflicting
   player bindings and warns.
+- `gui/inc/path_settings.h` + `gui/src/path_settings.cpp`: working-directory
+  model for ROMs, battery saves, save states, screenshots and the global
+  256-byte BIOS file path. Battery and state files use flat names based on the
+  ROM stem when a central directory is configured, or stay next to the ROM
+  when the independent "Same folder as ROM" checkbox is enabled (the default).
+  `Settings → Paths...` edits these values with Apply/Cancel; applying saves
+  the current battery in the old location first, then updates every running
+  instance in place. The BIOS path is loaded globally; active link sessions
+  keep the BIOS latched at session start.
+- Fast forward: hold the global `Fast forward` shortcut (Space by default;
+  speed in `Settings → Fast Forward speed`: 200%, 300% or MAX). At 200/300 the
+  main accumulator runs 2×/3× emulated frames and presents only the last one.
+  MAX ignores wall-clock accumulation and runs until roughly 75% of the
+  display interval (capped at 12 ms), leaving CPU headroom. Audio is discarded
+  while fast-forwarding. `File → Exit` closes the app cleanly.
+- While the Controllers, Key bindings or Paths windows are open, the input
+  manager is UI-blocked: game controls and global shortcuts do not reach the
+  emulator, but binding capture still works.
+- Link audio routing: the global `Audio` menu keeps enable/volume; `Link →
+  Audio` selects `Player 1`, `Player 2` or `Both` (default Player 1,
+  persisted as `[audio] link_source`). Each `EmulatorInstance` has a separate
+  output-enabled flag; muted instances pause their SDL device and discard the
+  APU ring. Without a link session P1 stays audible.
+- Link rendering: each PPU has its own frame phase. Player 1's texture is
+  refreshed when P1 reaches line 0; player 2's texture is refreshed inside
+  `EmulatorFrontend::tick()` when P2 reaches its own line 0. The combined
+  320×144 texture uses the latest completed frame of each machine, avoiding a
+  mixed-row horizontal seam (P2 can be at most one frame behind).
+- `gui/inc/session_state.h` + `gui/src/session_state.cpp`: `.qss.png`
+  link-session container, version 2. On disk it is a valid 320×144 PNG image
+  (the combined frame that is displayed) followed by the container bytes, so
+  file managers can show a thumbnail. The container stores two ROM identities
+  (name, informative path, size and FNV-1a 64 hash), BIOS metadata, UTC
+  creation time, emulated frames, the app build, a combined 320×144 RGBA
+  preview and the two raw core state blobs with header/payload CRCs. Version 1
+  `.qss` files (without PNG/new metadata) still load through the fallback
+  path. The filename is `Game1 - Game2 (short-hash).qss.png` in
+  player 1's save-state directory. Loading validates current ROMs, then tries
+  the saved path and finally `paths.roms/<filename>` (root only). F5/F8 save
+  or load the session `.qss.png` while a link session is active; otherwise
+  they use the selected slot `.sr0.png`…`.sr9.png`. Player 2 has no
+  independent state. Game changes recreate the session without auto-saving the
+  old `.qss`.
+- `gui/inc/i18n.h` + `gui/src/i18n.cpp`: gettext-style translation catalog.
+  English source strings are the keys and the fallback; `lang/es.po` holds the
+  Spanish translation. `Settings → Language` offers System default, English and
+  Español; the choice is stored as `[ui] language` in `QtreGB.ini`.
+  `QTR_LANG_DIR` overrides the catalog directory (otherwise `<exe>/lang`,
+  `<exe>/../lang` and `<cwd>/lang` are tried).
+- `gui/src/file_dialog_i18n.cpp`: fills ImGuiFileDialog's runtime string table
+  from `i18n::tr()`. File dialogs are asynchronous: the frontend stores a
+  pending open/save action and renders ImGuiFileDialog after the main window.
+  Player input and global shortcuts are blocked while a dialog is open.
+- Save-state slots: 10 slots per ROM (`.sr0.png`…`.sr9.png`), selected with
+  `Next state slot` / `Previous state slot` (PageUp/PageDown by default,
+  wrapping 0↔9). A new game or application start selects slot 0. The main
+  window has a fixed bottom status bar showing the current slot, the real
+  emulated FPS and recent save/load/slot-change messages; session states have
+  no slots. FPS counts completed emulated frames, not presentation refreshes.
+- `gui/inc/state_store.h` + `gui/src/state_store.cpp`: savestate container for
+  one player, `<rom>.sr<slot>.png`. On disk it is a valid 160×144 PNG image
+  (the screenshot) followed by the container bytes, so file managers can show
+  a thumbnail. The container wraps the core blob with magic/version,
+  core format/schema, UTC creation time, emulated frames, slot/kind/note,
+  ROM identity (title, filename, size, FNV-1a hash, mapper, CGB flag, cart
+  type, header/global checksum), BIOS identity (size, hash, active) and an
+  optional uncompressed 160×144 RGBA preview. Header and payload have CRC-32
+  and writes are atomic (temp + rename). Old `.srN` files containing only the
+  raw container or the raw `QTGBST01` core blob still load through the legacy
+  path. PNG-wrapped sizes measured: Tetris 115.432 B (112.7 KiB), and the
+  combined link state 260.685 B (254.6 KiB). Format documented in
+  `documentation/Game Boy/savestate-container-format.md`.
+- `File → State browser...`: floating window with the 10 slot thumbnails for
+  the current ROM, or the single combined `.qss.png` preview while a link
+  session is active. It shows creation date, emulated frames/time and file
+  size, and exposes Load / Save here / Refresh. A successful load closes the
+  browser; a failed load leaves it open. Player input and global shortcuts are
+  UI-blocked while it is open.
+- `gui/inc/fps_counter.h` + `gui/src/fps_counter.cpp`: 0.5 s sliding window
+  over completed emulated frames. The main loop records a frame in
+  `run_emulated_frame()`; `EmulatorFrontend::draw_main_status_bar()` prints
+  `FPS: --` until the first window closes and drops back to `--` after one
+  second without frames (LCD off).
 - `gui/src/main.cpp`: vsync-aware frame pacer. Emulation runs at the Game Boy
   rate (70224 T-cycles per frame, 59.7275 Hz), independent of the monitor.
   If SDL present actually blocks for the monitor refresh, the display drives
@@ -121,6 +214,15 @@ both are the only implementations — there are no selection flags.
   `PPU`).
 - The DocBoy PPU oracle was removed after reaching parity; it remains in Git
   history (`wip/ppu`, tag `ppu-oracle-25-0-8`).
+
+## libretro (siguiente tarea)
+- `libretro/Makefile` es un placeholder sin targets. La primera versión será
+  DMG `.gb`, single-player, RTC con el comportamiento actual y estados con el
+  blob del core. `retro_serialize_size` reservará **320 KiB** (doble del peor
+  caso conservador). El Link Cable queda fuera.
+- `libretro/screen-test/` está ignorada por Git: solo para probar localmente
+  una simulación de pantalla física (shader o post-proceso), nunca para
+  commitear.
 
 ## PPU screenshot harness
 - `MTS_FRAME_OUT=<file.pgm> ./build/mts_runner <rom.gb>` — dumps the first frame

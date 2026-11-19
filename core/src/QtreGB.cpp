@@ -225,6 +225,12 @@ bool QtreGB::load_boot_rom(vector<u8> boot_rom)
 	return true;
 }
 
+void QtreGB::clear_boot_rom()
+{
+	m_boot_rom.clear();
+	m_has_boot_rom = false;
+}
+
 void QtreGB::reset()
 {
 	reset_machine();

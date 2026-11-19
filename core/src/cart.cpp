@@ -181,6 +181,11 @@ const std::vector<u8>& Cart::rom() const
 	return m_internal != nullptr ? m_internal->rom() : empty;
 }
 
+CartMapper Cart::mapper() const
+{
+	return m_internal != nullptr ? m_internal->mapper() : CartMapper::None;
+}
+
 void Cart::save_state(StateWriter& writer) const
 {
 	const u8 mapper = m_internal != nullptr ?

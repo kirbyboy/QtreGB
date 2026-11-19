@@ -38,32 +38,6 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### tinyfiledialogs
-
-tinyfiledialogs v3.21.1
-Copyright (c) 2014-2025 Guillaume Vareille
-
-Se usa para los diálogos de archivo actuales; se sustituirá por
-ImGuiFileDialog.
-
-```text
-This software is provided 'as-is', without any express or implied
-warranty.  In no event will the authors be held liable for any damages
-arising from the use of this software.
-
-Permission is granted to anyone to use this software for any purpose,
-including commercial applications, and to alter it and redistribute it
-freely, subject to the following restrictions:
-
-1. The origin of this software must not be misrepresented; you must not
-   claim that you wrote the original software. If you use this software
-   in a product, an acknowledgment in the product documentation would be
-   appreciated but is not required.
-2. Altered source versions must be plainly marked as such, and must not be
-   misrepresented as being the original software.
-3. This notice may not be removed or altered from any source distribution.
-```
-
 ## Componentes con licencia MIT
 
 El siguiente texto se aplica a los componentes enumerados debajo.
@@ -102,10 +76,10 @@ ImGuiFileDialog v0.6.8 (commit `ee77f190861193a995435c388682f1512f6fd29a`)
 Copyright (c) 2018-2025 Stephane Cuillerdier (aka Aiekick)
 <https://github.com/aiekick/ImGuiFileDialog>
 
-Vendorizado en `third_party/ImGuiFileDialog`, con cambios locales para traducir
-sus textos en runtime. No es código de QtreGB; véase
-`third_party/ImGuiFileDialog/LOCAL_CHANGES.md` y el texto MIT anterior. Todavía
-no está conectado al build de la aplicación.
+Se usa para los diálogos de apertura y guardado de archivos. Vendorizado en
+`third_party/ImGuiFileDialog`, con cambios locales para traducir sus textos en
+runtime. No es código de QtreGB; véase
+`third_party/ImGuiFileDialog/LOCAL_CHANGES.md` y el texto MIT anterior.
 
 ### dirent
 
@@ -121,7 +95,12 @@ Copyright (c) 2017 Sean Barrett
 stb_image_resize2 v2.06
 Copyright (c) 2017 Sean Barrett
 
-Se incluye en ImGuiFileDialog para la carga y el escalado de imágenes.
+stb_image_write v1.16
+Copyright (c) 2017 Sean Barrett
+
+stb_image y stb_image_resize2 se incluyen en ImGuiFileDialog para la carga y
+el escalado de imágenes. stb_image_write lo usa QtreGB para incrustar la
+imagen de vista previa en los archivos de savestate.
 
 ### doctest
 

@@ -856,3 +856,14 @@ TEST_CASE("Machine state: failed load rolls back the components already applied"
 	REQUIRE(machine.save_state(after));
 	CHECK(before == after);
 }
+
+TEST_CASE("Machine state: boot ROM can be cleared for future resets")
+{
+	qtreGB::QtreGB machine;
+	std::vector<qtreGB::u8> boot(0x100, 0x5A);
+	REQUIRE(machine.load_boot_rom(boot));
+	CHECK(machine.has_boot_rom());
+
+	machine.clear_boot_rom();
+	CHECK_FALSE(machine.has_boot_rom());
+}

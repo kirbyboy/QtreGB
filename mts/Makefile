@@ -34,7 +34,15 @@ MTSROMS := $(wildcard \
 	$(MTSROOT)/emulator-only/mbc1/bits_bank1.gb \
 	$(MTSROOT)/emulator-only/mbc1/bits_bank2.gb \
 	$(MTSROOT)/emulator-only/mbc1/ram_64kb.gb \
-	$(MTSROOT)/emulator-only/mbc1/rom_4Mb.gb)
+	$(MTSROOT)/emulator-only/mbc1/rom_4Mb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_512kb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_1Mb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_2Mb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_4Mb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_8Mb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_16Mb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_32Mb.gb \
+	$(MTSROOT)/emulator-only/mbc5/rom_64Mb.gb)
 
 all: $(BUILDDIR)/mts_runner
 
@@ -44,7 +52,7 @@ $(OBJDIR)/mts/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)/mts $(DEPDIR)/mts
 	$(CXX) -c $(CFLAGS) -MMD -MP -MF $(DEPDIR)/mts/$*.d -o $@ $<
 
 $(BUILDDIR)/mts_runner: $(OBJS) $(BUILDDIR)/libqtrebgcore_opt.a | $(BUILDDIR)
-	$(CXX) -o $@ $(OBJS) $(BUILDDIR)/libqtrebgcore_opt.a
+	$(CXX) $(LTO_FLAGS) -o $@ $(OBJS) $(BUILDDIR)/libqtrebgcore_opt.a
 
 $(OBJDIR)/mts $(DEPDIR)/mts $(BUILDDIR):
 	mkdir -p $@

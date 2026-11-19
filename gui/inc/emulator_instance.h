@@ -13,6 +13,7 @@
 #include "display_processor.h"
 #include "ibackend.h"
 #include "input_state.h"
+#include "path_settings.h"
 #include "state_store.h"
 
 using namespace qtreGB;
@@ -44,13 +45,22 @@ class EmulatorInstance
 		void load_cart(std::vector<u8> cart, std::string rom_path = {});
 		// Stores a boot ROM. It is applied on the next load_cart()/reset().
 		bool load_boot_rom(std::vector<u8> boot_rom);
+		void clear_boot_rom();
 		void reset();
 		void set_audio_settings(const AudioSettings& settings);
 		const AudioSettings& audio_settings() const { return m_audio_settings; }
+		void set_audio_output_enabled(bool enabled);
+		bool audio_output_enabled() const { return m_audio_output_enabled; }
+		void set_path_settings(const PathSettings& settings);
+		const PathSettings& path_settings() const { return m_paths; }
+		void set_state_slot(int slot);
+		void save_battery_now() { save_battery(); }
 
-		// Raw core savestate next to the ROM: <rom>.sr1.
-		bool save_state();
-		bool load_state();
+		// Savestate container next to the ROM: <rom>.sr<slot>. The core blob
+		// is wrapped with ROM/BIOS identity, timestamp, emulated frames and an
+		// optional RGBA preview.
+		bool save_state(std::uint64_t emulated_frames = 0);
+		bool load_state(SavestateInfo* info = nullptr);
 		std::string state_path() const;
 		std::string battery_path() const;
 		u8 player_index() const { return m_player_index; }
@@ -61,16 +71,22 @@ class EmulatorInstance
 		const QtreGB& machine() const { return *m_machine; }
 		bool has_boot_rom() const { return !m_boot_rom.empty(); }
 		bool boot_rom_active() const { return m_machine->has_boot_rom(); }
+		const std::vector<u8>& boot_rom() const { return m_boot_rom; }
+		const std::vector<u8>& rom_data() const { return m_cart; }
+		const std::string& rom_path() const { return m_rom_path; }
 		void tick();
 		bool get_frame_ready();
 		bool is_ready() const { return m_is_emulator_ready; }
 		void drain_audio();
+		void discard_audio();
 
 	private:
 		IGuiBackend* m_backend = nullptr;
 		void* m_texture_id = nullptr;
 		SDL_AudioDeviceID m_audio_device = 0;
 		AudioSettings m_audio_settings;
+		bool m_audio_output_enabled = true;
+		PathSettings m_paths;
 		DisplayProcessor m_display;
 		std::unique_ptr<QtreGB> m_machine;
 		std::vector<u8> m_cart;
@@ -83,9 +99,11 @@ class EmulatorInstance
 		bool m_is_emulator_ready;
 
 		bool init_audio();
+		void update_audio_device_state();
 		void rebuild_machine();
 		void save_battery();
 		void load_battery();
+		SavestateInfo current_state_info(std::uint64_t emulated_frames) const;
 		void set_button(u8 button, bool pressed);
 		void apply_input();
 

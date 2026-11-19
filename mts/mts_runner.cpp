@@ -116,13 +116,17 @@ bool dump_framebuffer_pgm(QtreGB& emu, const std::string& path)
 
 CpuState read_cpu_state(QtreGB& emu)
 {
-	TaggedSerializer out(TaggedSerializer::Mode::Write);
-	emu.m_cpu.serialize(out);
-
 	CpuState state;
-	TaggedSerializer in(TaggedSerializer::Mode::Read, out.data());
-	state.serialize(in);
-
+	state.a = emu.m_cpu.get_a();
+	state.f = emu.m_cpu.get_f();
+	state.b = emu.m_cpu.get_b();
+	state.c = emu.m_cpu.get_c();
+	state.d = emu.m_cpu.get_d();
+	state.e = emu.m_cpu.get_e();
+	state.h = emu.m_cpu.get_h();
+	state.l = emu.m_cpu.get_l();
+	state.pc = emu.m_cpu.get_pc();
+	state.sp = emu.m_cpu.get_sp();
 	return state;
 }
 
@@ -172,7 +176,7 @@ bool load_rom(const std::string& path, std::vector<u8>& rom, std::string& error)
 		case 1: error = "cartridge: ROM too small"; return false;
 		case 2: error = "cartridge: invalid ROM size"; return false;
 		case 3: error = "cartridge: size does not match header"; return false;
-		case 4: error = "cartridge: unsupported type (e.g. MBC3/MBC5)"; return false;
+		case 4: error = "cartridge: unsupported type"; return false;
 		default: break;
 	}
 

@@ -51,12 +51,17 @@ class InputManager
 		bool is_device_connected(const InputDeviceId& device) const;
 
 		void handle_event(const SDL_Event& event);
+		// Blocks player input and global shortcuts while an ImGui modal (for
+		// example a file dialog) owns the keyboard and mouse.
+		void set_ui_blocked(bool blocked);
 		// Recomputes player and shortcut state from the latest SDL events.
 		void update();
 
 		bool player_pressed(size_t player, GbButton button) const;
 		// Returns true once per press. The trigger is cleared when consumed.
 		bool consume_shortcut(ShortcutAction action);
+		// Current pressed state of a shortcut, useful for hold-to-fast-forward.
+		bool shortcut_held(ShortcutAction action) const;
 
 		// An empty controller_guid means "any controller" (used by the global
 		// shortcut slots). Player slots pass the selected device GUID.
@@ -102,9 +107,13 @@ class InputManager
 		std::array<std::array<bool, 8>, 2> m_logical_pressed {};
 		std::array<DirectionResolver, 2> m_directions;
 
-		std::array<bool, 3> m_shortcut_controller_raw {};
-		std::array<bool, 3> m_shortcut_previous {};
-		std::array<bool, 3> m_shortcut_trigger {};
+		std::array<bool, InputSettings::ShortcutCount>
+			m_shortcut_controller_raw {};
+		std::array<bool, InputSettings::ShortcutCount>
+			m_shortcut_previous {};
+		std::array<bool, InputSettings::ShortcutCount>
+			m_shortcut_trigger {};
+		bool m_ui_blocked = false;
 
 		CaptureState m_capture;
 

@@ -1,9 +1,12 @@
 #include <iostream>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <filesystem>
 #include <vector>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <thread>
@@ -19,16 +22,53 @@
 #include "emulator_frontend.h"
 #include "imgui_manager.h"
 #include "app_config.h"
+#include "i18n.h"
 
 using namespace qtreGB;
 
 using namespace std;
+
+static std::string resolve_language_directory()
+{
+	if(const char* override_path = std::getenv("QTR_LANG_DIR"))
+	{
+		if(override_path[0] != '\0')
+		{
+			return std::filesystem::u8path(override_path).u8string();
+		}
+	}
+
+	std::vector<std::filesystem::path> candidates;
+	if(char* base = SDL_GetBasePath())
+	{
+		const std::filesystem::path base_path = std::filesystem::u8path(base);
+		candidates.push_back(base_path / "lang");
+		candidates.push_back(base_path / ".." / "lang");
+		candidates.push_back(base_path / ".." / "share" / "QtreGB" / "lang");
+		candidates.push_back(base_path / ".." / "Resources" / "lang");
+		SDL_free(base);
+	}
+	std::error_code error;
+	candidates.push_back(std::filesystem::current_path(error) / "lang");
+
+	for(const std::filesystem::path& candidate : candidates)
+	{
+		if(std::filesystem::is_directory(candidate, error))
+		{
+			return candidate.u8string();
+		}
+	}
+	return "lang";
+}
 
 constexpr int GB_FRAME_TICKS = 70224;
 constexpr double GB_CLOCK_HZ = 4194304.0;
 constexpr double GB_FRAME_SECONDS = GB_FRAME_TICKS / GB_CLOCK_HZ;
 constexpr double MAX_CATCHUP_SECONDS = 0.25;
 constexpr int MAX_FRAMES_PER_LOOP = 4;
+constexpr int MAX_FAST_FRAMES_PER_LOOP = 240;
+constexpr double MAX_FAST_FORWARD_BUDGET_SECONDS = 0.012;
+constexpr double MAX_FAST_FORWARD_DISPLAY_FRACTION = 0.75;
 
 // Runs the emulator until the PPU completes a frame. The PPU signals the
 // frame callback at the start of line 0, when the video buffer contains a
@@ -49,6 +89,7 @@ static bool run_emulated_frame(EmulatorFrontend& frontend)
         frontend.tick();
         if(primary->get_frame_ready())
         {
+            frontend.record_emulated_frame();
             return true;
         }
     }
@@ -119,8 +160,14 @@ int main()
 	ImGuiManager imguiManager;
 	imguiManager.init();
 
+	i18n::set_language_directory(resolve_language_directory());
+	i18n::set_locale(config.language);
+
 	EmulatorFrontend frontend(&backend, config.display, config.audio,
-		config.input);
+		config.input, config.paths);
+	frontend.set_language(config.language);
+	frontend.set_fast_forward_speed(config.fast_forward_speed);
+	frontend.set_recent_roms(config.recent_roms);
 	EmulatorInstance* emulator = frontend.get_emulator();
 
 	bool running = true;
@@ -132,7 +179,7 @@ int main()
 	Clock::time_point previous = Clock::now();
 	double accumulator = 0.0;
 
-	while (running)
+	while (running && !frontend.should_close())
 	{
 		// Process SDL events
 		while (SDL_PollEvent(&event))
@@ -164,26 +211,62 @@ int main()
 		{
 			delta = MAX_CATCHUP_SECONDS;
 		}
-		accumulator += delta;
-
 		bool new_frame = false;
+		const int refresh_hz = backend.display_refresh_hz();
+		const bool fast_forward = frontend.fast_forward_active();
+		const FastForwardSpeed fast_speed = frontend.fast_forward_speed();
 		if(emulator->is_ready())
 		{
-			int frames = 0;
-			while(accumulator >= GB_FRAME_SECONDS && frames < MAX_FRAMES_PER_LOOP)
+			if(fast_forward && fast_speed == FastForwardSpeed::Max)
 			{
-				if(run_emulated_frame(frontend))
+				// Run as much as fits in roughly three quarters of the display
+				// interval, then let presentation/sleep give the CPU some
+				// breathing room.
+				const double display_seconds = refresh_hz > 0
+					? 1.0 / refresh_hz : GB_FRAME_SECONDS;
+				const double budget = std::min(MAX_FAST_FORWARD_BUDGET_SECONDS,
+					display_seconds * MAX_FAST_FORWARD_DISPLAY_FRACTION);
+				const Clock::time_point fast_start = Clock::now();
+				int frames = 0;
+				do
 				{
-					new_frame = true;
-				}
-				accumulator -= GB_FRAME_SECONDS;
-				frames++;
+					if(run_emulated_frame(frontend))
+					{
+						new_frame = true;
+					}
+					++frames;
+					const double elapsed = std::chrono::duration<double>(
+						Clock::now() - fast_start).count();
+					if(elapsed >= budget || frames >= MAX_FAST_FRAMES_PER_LOOP)
+					{
+						break;
+					}
+				} while(true);
+				accumulator = 0.0;
 			}
-
-			// Do not let a long stall build an ever-growing backlog.
-			if(frames == MAX_FRAMES_PER_LOOP && accumulator >= GB_FRAME_SECONDS)
+			else
 			{
-				accumulator = std::fmod(accumulator, GB_FRAME_SECONDS);
+				const double multiplier = !fast_forward ? 1.0 :
+					(fast_speed == FastForwardSpeed::X300 ? 3.0 : 2.0);
+				accumulator += delta * multiplier;
+				const int max_frames = fast_forward
+					? MAX_FRAMES_PER_LOOP * 3 : MAX_FRAMES_PER_LOOP;
+				int frames = 0;
+				while(accumulator >= GB_FRAME_SECONDS && frames < max_frames)
+				{
+					if(run_emulated_frame(frontend))
+					{
+						new_frame = true;
+					}
+					accumulator -= GB_FRAME_SECONDS;
+					frames++;
+				}
+
+				// Do not let a long stall build an ever-growing backlog.
+				if(frames == max_frames && accumulator >= GB_FRAME_SECONDS)
+				{
+					accumulator = std::fmod(accumulator, GB_FRAME_SECONDS);
+				}
 			}
 
 			frontend.drain_audio();
@@ -212,7 +295,6 @@ int main()
 		// cumulative drift and a missed vblank every few seconds. If the
 		// driver reports vsync but returns immediately, keep the explicit
 		// frame cap to avoid a busy loop.
-		const int refresh_hz = backend.display_refresh_hz();
 		const Clock::duration vsync_interval = refresh_hz > 0
 			? std::chrono::duration_cast<Clock::duration>(
 				std::chrono::duration<double>(1.0 / refresh_hz))
@@ -249,6 +331,10 @@ int main()
 	saved.display = frontend.display_settings();
 	saved.audio = frontend.audio_settings();
 	saved.input = frontend.input_settings();
+	saved.paths = frontend.path_settings();
+	saved.fast_forward_speed = frontend.fast_forward_speed();
+	saved.recent_roms = frontend.recent_roms();
+	saved.language = frontend.language();
 	saved.window_maximized = backend.window_maximized();
 	if(!saved.window_maximized && !backend.window_fullscreen())
 	{

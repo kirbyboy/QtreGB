@@ -22,6 +22,6 @@ Third-party components and their licenses are listed in
 
 ## Dependencies
 
-QtreGB currently uses SDL2, Dear ImGui, tinyfiledialogs and doctest. A vendored
-copy of ImGuiFileDialog is prepared under `third_party/ImGuiFileDialog` for the
-future in-app file dialogs.
+QtreGB uses SDL2, Dear ImGui, ImGuiFileDialog and doctest. The Spanish UI
+translation lives in `lang/es.po`; the language can be changed from
+`Settings → Language`.

@@ -1,0 +1,739 @@
+# Spanish translation for QtreGB.
+# The English source strings in the code are the keys and the fallback.
+# License: GPL-3.0-or-later, same as the application.
+msgid ""
+msgstr ""
+"Project-Id-Version: QtreGB 1.0\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "File"
+msgstr "Archivo"
+
+msgid "Open ROM..."
+msgstr "Abrir ROM..."
+
+msgid "Load ROM player 2..."
+msgstr "Cargar ROM del jugador 2..."
+
+msgid "Load BIOS..."
+msgstr "Cargar BIOS..."
+
+msgid "Reset"
+msgstr "Reiniciar"
+
+msgid "Save state"
+msgstr "Guardar estado"
+
+msgid "Load state"
+msgstr "Cargar estado"
+
+msgid "BIOS: none"
+msgstr "BIOS: ninguna"
+
+msgid "BIOS: active"
+msgstr "BIOS: activa"
+
+msgid "BIOS: loaded (reset to apply)"
+msgstr "BIOS: cargada (reinicia para aplicar)"
+
+msgid "BIOS: invalid size (expected 256 bytes)"
+msgstr "BIOS: tamaño no válido (se esperaban 256 bytes)"
+
+msgid "Graphics"
+msgstr "Gráficos"
+
+msgid "Display FPS: %.1f - %.2f ms"
+msgstr "FPS de pantalla: %.1f - %.2f ms"
+
+msgid "Palette"
+msgstr "Paleta"
+
+msgid "DMG"
+msgstr "DMG"
+
+msgid "Pocket"
+msgstr "Pocket"
+
+msgid "Custom..."
+msgstr "Personalizada..."
+
+msgid "Background"
+msgstr "Fondo"
+
+msgid "LCD grid"
+msgstr "Rejilla LCD"
+
+msgid "Grid opacity"
+msgstr "Opacidad de la rejilla"
+
+msgid "Integer scaling"
+msgstr "Escalado entero"
+
+msgid "Present mode"
+msgstr "Modo de presentación"
+
+msgid "Auto"
+msgstr "Automático"
+
+msgid "Monitor"
+msgstr "Monitor"
+
+msgid "Game Boy"
+msgstr "Game Boy"
+
+msgid "Fullscreen"
+msgstr "Pantalla completa"
+
+msgid "Save screenshot..."
+msgstr "Guardar captura..."
+
+msgid "Reset graphics settings"
+msgstr "Restablecer ajustes gráficos"
+
+msgid "Ghosting"
+msgstr "Estelas"
+
+msgid "Preset"
+msgstr "Preajuste"
+
+msgid "Custom"
+msgstr "Personalizado"
+
+msgid "Off"
+msgstr "Desactivado"
+
+msgid "Fast"
+msgstr "Rápida"
+
+msgid "Normal"
+msgstr "Normal"
+
+msgid "Slow"
+msgstr "Lenta"
+
+msgid "Enabled"
+msgstr "Activado"
+
+msgid "Lighten ms/tone"
+msgstr "Aclarado ms/tono"
+
+msgid "Darken ms/tone"
+msgstr "Oscurecido ms/tono"
+
+msgid "Audio"
+msgstr "Audio"
+
+msgid "Enable audio"
+msgstr "Activar audio"
+
+msgid "Volume"
+msgstr "Volumen"
+
+msgid "Settings"
+msgstr "Ajustes"
+
+msgid "Controllers..."
+msgstr "Mandos..."
+
+msgid "Key bindings..."
+msgstr "Atajos de teclado..."
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "System default"
+msgstr "Predeterminado del sistema"
+
+msgid "Debug"
+msgstr "Depuración"
+
+msgid "PPU"
+msgstr "PPU"
+
+msgid "Layers Window"
+msgstr "Ventana de capas"
+
+msgid "BG"
+msgstr "BG"
+
+msgid "Window"
+msgstr "Ventana"
+
+msgid "Sprites"
+msgstr "Sprites"
+
+msgid "Custom palette"
+msgstr "Paleta personalizada"
+
+msgid "Color %zu"
+msgstr "Color %zu"
+
+msgid "Apply"
+msgstr "Aplicar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Reset DMG"
+msgstr "Restablecer DMG"
+
+msgid "Controllers"
+msgstr "Mandos"
+
+msgid "Refresh devices"
+msgstr "Actualizar dispositivos"
+
+msgid "Reset controllers"
+msgstr "Restablecer mandos"
+
+msgid "Controller list refreshed"
+msgstr "Lista de mandos actualizada"
+
+msgid "Controller settings reset to defaults"
+msgstr "Ajustes de mandos restablecidos"
+
+msgid "Player %d"
+msgstr "Jugador %d"
+
+msgid "Device"
+msgstr "Dispositivo"
+
+msgid "None"
+msgstr "Ninguno"
+
+msgid "Keyboard"
+msgstr "Teclado"
+
+msgid "Controller"
+msgstr "Mando"
+
+msgid "Controller (not connected)"
+msgstr "Mando (no conectado)"
+
+msgid "Controller not connected. Bindings stay assigned and become active when it reconnects."
+msgstr "Mando no conectado. Las asignaciones se conservan y se activan al reconectar."
+
+msgid "Control"
+msgstr "Control"
+
+msgid "Bind"
+msgstr "Asignar"
+
+msgid "Clear"
+msgstr "Borrar"
+
+msgid "Click to bind a new control"
+msgstr "Haz clic para asignar un control nuevo"
+
+msgid "Allow opposite directions"
+msgstr "Permitir direcciones opuestas"
+
+msgid "When disabled, the latest pressed direction wins and the other one returns when it is released."
+msgstr "Cuando está desactivado, gana la última dirección pulsada y la otra vuelve al soltarse."
+
+msgid "Click a control or Bind and press the new control."
+msgstr "Haz clic en un control o en Asignar y pulsa el control nuevo."
+
+msgid "Analog sticks/triggers: 60% press, 40% release. Esc or Backspace clears."
+msgstr "Sticks/gatillos: 60% para pulsar, 40% para soltar. Esc o Retroceso borra."
+
+msgid "Player %zu: %s"
+msgstr "Jugador %zu: %s"
+
+msgid "Player %zu device changed"
+msgstr "Dispositivo del jugador %zu cambiado"
+
+msgid "Player %zu device changed; its bindings were cleared"
+msgstr "Dispositivo del jugador %zu cambiado; se borraron sus asignaciones"
+
+msgid "Player %zu %s"
+msgstr "Jugador %zu %s"
+
+msgid "Binding cleared: %s"
+msgstr "Asignación borrada: %s"
+
+msgid "Control already used by the %s key binding"
+msgstr "Ese control ya lo usa el atajo %s"
+
+msgid "That control was already assigned to %s; its binding was removed"
+msgstr "Ese control ya estaba asignado a %s; se eliminó su asignación"
+
+msgid "Select a device for this player before binding controls"
+msgstr "Selecciona un dispositivo para este jugador antes de asignar controles"
+
+msgid "Capturing %s"
+msgstr "Capturando %s"
+
+msgid "Press a key or button. Esc or Backspace clears."
+msgstr "Pulsa una tecla o botón. Esc o Retroceso borra."
+
+msgid "keyboard"
+msgstr "teclado"
+
+msgid "controller"
+msgstr "mando"
+
+msgid "Key bindings"
+msgstr "Atajos de teclado"
+
+msgid "Reset key bindings"
+msgstr "Restablecer atajos"
+
+msgid "Key bindings reset to defaults"
+msgstr "Atajos restablecidos a los valores por defecto"
+
+msgid "Action"
+msgstr "Acción"
+
+msgid "Click a slot or Bind. Keyboard slots accept keys; controller slots accept any controller."
+msgstr "Haz clic en un hueco o en Asignar. Los huecos de teclado aceptan teclas; los de mando aceptan cualquier mando."
+
+msgid "Esc or Backspace clears a capture."
+msgstr "Esc o Retroceso borra una captura."
+
+msgid "%s binding cleared"
+msgstr "%s: asignación borrada"
+
+msgid "%s keyboard binding cleared"
+msgstr "Atajo de teclado %s borrado"
+
+msgid "%s controller binding cleared"
+msgstr "Atajo de mando %s borrado"
+
+msgid "%s wins: removed %s"
+msgstr "Gana %s: eliminado %s"
+
+msgid "%s = %s"
+msgstr "%s = %s"
+
+msgid "%s = %s (moved from another shortcut)"
+msgstr "%s = %s (movido desde otro atajo)"
+
+msgid "%s (%s)"
+msgstr "%s (%s)"
+
+msgid "Right"
+msgstr "Derecha"
+
+msgid "Left"
+msgstr "Izquierda"
+
+msgid "Up"
+msgstr "Arriba"
+
+msgid "Down"
+msgstr "Abajo"
+
+msgid "A"
+msgstr "A"
+
+msgid "B"
+msgstr "B"
+
+msgid "Start"
+msgstr "Inicio"
+
+msgid "Select"
+msgstr "Selección"
+
+msgid "(none)"
+msgstr "(ninguno)"
+
+msgid "Back"
+msgstr "Atrás"
+
+msgid "Guide"
+msgstr "Guía"
+
+msgid "Left Stick"
+msgstr "Stick izquierdo"
+
+msgid "Right Stick"
+msgstr "Stick derecho"
+
+msgid "LB"
+msgstr "LB"
+
+msgid "RB"
+msgstr "RB"
+
+msgid "LT"
+msgstr "LT"
+
+msgid "RT"
+msgstr "RT"
+
+msgid "D-Pad Up"
+msgstr "Cruceta arriba"
+
+msgid "D-Pad Down"
+msgstr "Cruceta abajo"
+
+msgid "D-Pad Left"
+msgstr "Cruceta izquierda"
+
+msgid "D-Pad Right"
+msgstr "Cruceta derecha"
+
+msgid "Left Stick Up"
+msgstr "Stick izquierdo arriba"
+
+msgid "Left Stick Down"
+msgstr "Stick izquierdo abajo"
+
+msgid "Left Stick Left"
+msgstr "Stick izquierdo izquierda"
+
+msgid "Left Stick Right"
+msgstr "Stick izquierdo derecha"
+
+msgid "Right Stick Up"
+msgstr "Stick derecho arriba"
+
+msgid "Right Stick Down"
+msgstr "Stick derecho abajo"
+
+msgid "Right Stick Left"
+msgstr "Stick derecho izquierda"
+
+msgid "Right Stick Right"
+msgstr "Stick derecho derecha"
+
+msgid "OK"
+msgstr "Aceptar"
+
+msgid "Devices"
+msgstr "Dispositivos"
+
+msgid "Search :"
+msgstr "Buscar:"
+
+msgid "[Dir]"
+msgstr "[Carpeta]"
+
+msgid "[Link]"
+msgstr "[Enlace]"
+
+msgid "[File]"
+msgstr "[Archivo]"
+
+msgid "File Name:"
+msgstr "Nombre del archivo:"
+
+msgid "Directory Path:"
+msgstr "Ruta del directorio:"
+
+msgid "Reset search"
+msgstr "Borrar búsqueda"
+
+msgid "Edit path\nYou can also right click on path buttons"
+msgstr "Editar ruta\nTambién puedes hacer clic derecho en los botones de ruta"
+
+msgid "Reset to current directory"
+msgstr "Volver al directorio actual"
+
+msgid "Create Directory"
+msgstr "Crear directorio"
+
+msgid "File name"
+msgstr "Nombre del archivo"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "Size"
+msgstr "Tamaño"
+
+msgid "Date"
+msgstr "Fecha"
+
+msgid "o"
+msgstr "B"
+
+msgid "Ko"
+msgstr "KB"
+
+msgid "Mo"
+msgstr "MB"
+
+msgid "Go"
+msgstr "GB"
+
+msgid "The selected file already exists!"
+msgstr "El archivo seleccionado ya existe."
+
+msgid "Are you sure you want to overwrite it?"
+msgstr "¿Seguro que quieres sobrescribirlo?"
+
+msgid "Confirm"
+msgstr "Confirmar"
+
+msgid "Thumbnails"
+msgstr "Miniaturas"
+
+msgid "File List"
+msgstr "Lista de archivos"
+
+msgid "Thumbnails List"
+msgstr "Lista de miniaturas"
+
+msgid "Thumbnails Grid"
+msgstr "Cuadrícula de miniaturas"
+
+msgid "Places"
+msgstr "Lugares"
+
+msgid "Bookmarks"
+msgstr "Marcadores"
+
+msgid "ok"
+msgstr "ok"
+
+msgid "Open ROM"
+msgstr "Abrir ROM"
+
+msgid "Open boot ROM"
+msgstr "Abrir BIOS"
+
+msgid "Save screenshot"
+msgstr "Guardar captura"
+
+msgid "Game Boy ROMs"
+msgstr "ROMs de Game Boy"
+
+msgid "Game Boy boot ROM"
+msgstr "BIOS de Game Boy"
+
+msgid "BMP image"
+msgstr "Imagen BMP"
+
+msgid "State saved: %s"
+msgstr "Estado guardado: %s"
+
+msgid "State loaded: %s"
+msgstr "Estado cargado: %s"
+
+msgid "Save state failed"
+msgstr "No se pudo guardar el estado"
+
+msgid "Save state failed: no ROM loaded"
+msgstr "No se pudo guardar el estado: no hay ROM cargada"
+
+msgid "Load state failed (missing/corrupt state or different ROM)"
+msgstr "No se pudo cargar el estado (falta, está dañado o es de otra ROM)"
+
+msgid "Load state failed: no ROM loaded"
+msgstr "No se pudo cargar el estado: no hay ROM cargada"
+
+msgid "Screenshot saved: %s"
+msgstr "Captura guardada: %s"
+
+msgid "Screenshot failed"
+msgstr "No se pudo guardar la captura"
+
+msgid "Could not open the ROM file"
+msgstr "No se pudo abrir el archivo ROM"
+
+msgid "Could not open the boot ROM file"
+msgstr "No se pudo abrir el archivo BIOS"
+
+msgid "Player 2 ROM loaded: %s"
+msgstr "ROM del jugador 2 cargada: %s"
+
+msgid "Player 2: could not open ROM"
+msgstr "Jugador 2: no se pudo abrir la ROM"
+
+msgid "Player 2: could not create instance"
+msgstr "Jugador 2: no se pudo crear la instancia"
+
+msgid "Player 2: invalid ROM"
+msgstr "Jugador 2: ROM no válida"
+
+msgid "Paths..."
+msgstr "Rutas..."
+
+msgid "Paths"
+msgstr "Rutas"
+
+msgid "ROMs"
+msgstr "ROMs"
+
+msgid "BIOS / Boot ROMs"
+msgstr "BIOS / ROMs de arranque"
+
+msgid "Battery saves"
+msgstr "Guardados de batería"
+
+msgid "Save states"
+msgstr "Estados guardados"
+
+msgid "Screenshots"
+msgstr "Capturas"
+
+msgid "Browse..."
+msgstr "Examinar..."
+
+msgid "Same folder as ROM"
+msgstr "Misma carpeta que la ROM"
+
+msgid "Files stay next to the loaded ROM."
+msgstr "Los archivos se guardan junto a la ROM cargada."
+
+msgid "Directory does not exist."
+msgstr "El directorio no existe."
+
+msgid "Reset defaults"
+msgstr "Restablecer valores"
+
+msgid "Paths applied"
+msgstr "Rutas aplicadas"
+
+msgid "Choose ROMs directory"
+msgstr "Elegir directorio de ROMs"
+
+msgid "Choose BIOS directory"
+msgstr "Elegir directorio de BIOS"
+
+msgid "Choose battery saves directory"
+msgstr "Elegir directorio de guardados de batería"
+
+msgid "Choose save states directory"
+msgstr "Elegir directorio de estados guardados"
+
+msgid "Choose screenshots directory"
+msgstr "Elegir directorio de capturas"
+
+msgid "Working directories used by the file dialogs and save files. Empty paths use the last used directory; battery and save state paths fall back to the ROM folder."
+msgstr "Directorios de trabajo usados por los diálogos de archivo y los guardados. Las rutas vacías usan el último directorio usado; las de batería y estados guardados usan la carpeta de la ROM."
+
+msgid "Link"
+msgstr "Enlace"
+
+msgid "Start session..."
+msgstr "Iniciar sesión..."
+
+msgid "Reset player 1"
+msgstr "Reiniciar jugador 1"
+
+msgid "Reset player 2"
+msgstr "Reiniciar jugador 2"
+
+msgid "Stop session"
+msgstr "Detener sesión"
+
+msgid "Session stopped"
+msgstr "Sesión detenida"
+
+msgid "Player 1 ROM loaded: %s"
+msgstr "ROM del jugador 1 cargada: %s"
+
+msgid "Session state saved: %s"
+msgstr "Estado de sesión guardado: %s"
+
+msgid "Session state loaded: %s"
+msgstr "Estado de sesión cargado: %s"
+
+msgid "Session state failed: %s"
+msgstr "Error en el estado de sesión: %s"
+
+msgid "Could not read the BIOS file: %s"
+msgstr "No se pudo leer el archivo BIOS: %s"
+
+msgid "BIOS file"
+msgstr "Archivo BIOS"
+
+msgid "BIOS"
+msgstr "BIOS"
+
+msgid "Choose BIOS file"
+msgstr "Elegir archivo BIOS"
+
+msgid "BIOS file must be exactly 256 bytes."
+msgstr "El archivo BIOS debe tener exactamente 256 bytes."
+
+msgid "Next state slot"
+msgstr "Siguiente ranura de guardado"
+
+msgid "Previous state slot"
+msgstr "Ranura de guardado anterior"
+
+msgid "State slot: %d"
+msgstr "Ranura de guardado: %d"
+
+msgid "Session state (single slot)"
+msgstr "Estado de sesión (ranura única)"
+
+msgid "Link sessions use a single state file"
+msgstr "Las sesiones Link usan un único archivo de estado"
+
+msgid "Both"
+msgstr "Ambos"
+
+msgid "Player 1"
+msgstr "Jugador 1"
+
+msgid "Player 2"
+msgstr "Jugador 2"
+
+msgid "Link audio: %s"
+msgstr "Audio Link: %s"
+
+msgid "Fast forward"
+msgstr "Avance rápido"
+
+msgid "Fast Forward speed"
+msgstr "Velocidad de avance rápido"
+
+msgid "Exit"
+msgstr "Salir"
+
+msgid "State browser..."
+msgstr "Navegador de estados..."
+
+msgid "State browser"
+msgstr "Navegador de estados"
+
+msgid "Refresh"
+msgstr "Actualizar"
+
+msgid "Link session"
+msgstr "Sesión Link"
+
+msgid "No ROM loaded"
+msgstr "No hay ROM cargada"
+
+msgid "No preview"
+msgstr "Sin vista previa"
+
+msgid "Current"
+msgstr "Actual"
+
+msgid "Slot %d"
+msgstr "Ranura %d"
+
+msgid "Saved: %s"
+msgstr "Guardado: %s"
+
+msgid "Frames: %llu (%s)"
+msgstr "Fotogramas: %llu (%s)"
+
+msgid "Size: %s"
+msgstr "Tamaño: %s"
+
+msgid "Unreadable state"
+msgstr "Estado ilegible"
+
+msgid "Empty slot"
+msgstr "Ranura vacía"
+
+msgid "Load"
+msgstr "Cargar"
+
+msgid "Save here"
+msgstr "Guardar aquí"
+
+msgid "No session state saved"
+msgstr "No hay estado de sesión guardado"

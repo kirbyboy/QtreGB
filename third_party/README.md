@@ -11,5 +11,5 @@ ignored by Git.
 `VERSION.txt` and `LOCAL_CHANGES.md`. The code is not QtreGB code; it is pinned
 here until the project decides to update or replace it.
 
-The library is not wired into the QtreGB build yet. When it is, the Makefile in
-that directory builds `libImGuiFileDialog.a` against `lib/imgui/src`.
+The Makefile in that directory builds `libImGuiFileDialog.a` against
+`lib/imgui/src`; the GUI links it for the file open/save dialogs.

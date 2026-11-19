@@ -45,6 +45,7 @@ class QtreGB
 		// Stores the boot ROM and enables it on the next reset/load_cart.
 		// The size must be exactly 0x100 bytes (DMG boot ROM).
 		bool load_boot_rom(std::vector<u8> boot_rom);
+		void clear_boot_rom();
 		bool has_boot_rom() const { return m_has_boot_rom; }
 		void reset();
 

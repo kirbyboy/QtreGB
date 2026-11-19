@@ -34,31 +34,6 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### tinyfiledialogs
-
-tinyfiledialogs v3.21.1
-Copyright (c) 2014-2025 Guillaume Vareille
-
-Used for the current file dialogs; it will be replaced by ImGuiFileDialog.
-
-```text
-This software is provided 'as-is', without any express or implied
-warranty.  In no event will the authors be held liable for any damages
-arising from the use of this software.
-
-Permission is granted to anyone to use this software for any purpose,
-including commercial applications, and to alter it and redistribute it
-freely, subject to the following restrictions:
-
-1. The origin of this software must not be misrepresented; you must not
-   claim that you wrote the original software. If you use this software
-   in a product, an acknowledgment in the product documentation would be
-   appreciated but is not required.
-2. Altered source versions must be plainly marked as such, and must not be
-   misrepresented as being the original software.
-3. This notice may not be removed or altered from any source distribution.
-```
-
 ## MIT-licensed components
 
 The following text applies to the components listed below.
@@ -97,10 +72,10 @@ ImGuiFileDialog v0.6.8 (commit `ee77f190861193a995435c388682f1512f6fd29a`)
 Copyright (c) 2018-2025 Stephane Cuillerdier (aka Aiekick)
 <https://github.com/aiekick/ImGuiFileDialog>
 
-Vendored in `third_party/ImGuiFileDialog`, with local changes for runtime UI
-translations. It is not QtreGB code; see
-`third_party/ImGuiFileDialog/LOCAL_CHANGES.md` and the MIT text above. It is not
-wired into the application build yet.
+Used for the file open/save dialogs. Vendored in
+`third_party/ImGuiFileDialog`, with local changes for runtime UI translations.
+It is not QtreGB code; see `third_party/ImGuiFileDialog/LOCAL_CHANGES.md` and
+the MIT text above.
 
 ### dirent
 
@@ -116,7 +91,12 @@ Copyright (c) 2017 Sean Barrett
 stb_image_resize2 v2.06
 Copyright (c) 2017 Sean Barrett
 
-Included by ImGuiFileDialog for image loading and resizing.
+stb_image_write v1.16
+Copyright (c) 2017 Sean Barrett
+
+stb_image and stb_image_resize2 are included by ImGuiFileDialog for image
+loading and resizing. stb_image_write is used by QtreGB to embed the preview
+image in savestate files.
 
 ### doctest
 
